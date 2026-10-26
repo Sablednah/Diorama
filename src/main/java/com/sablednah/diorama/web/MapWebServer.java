@@ -95,6 +95,10 @@ public final class MapWebServer {
                 json(ex, players());
                 return;
             }
+            if (path.equals("/api/at")) {
+                at(ex);
+                return;
+            }
             if (path.equals("/api/markers")) {
                 json(ex, markers());
                 return;
@@ -202,6 +206,85 @@ public final class MapWebServer {
         return o;
     }
 
+    /**
+     * {@code /api/at?world=…&view=se&sx=…&sy=…}: the block under one map pixel, for the info bar.
+     * {@code sx, sy} are pixels at the most detailed zoom. An empty object when the ray met nothing.
+     */
+    private void at(HttpExchange ex) throws IOException {
+        Map<String, String> q = query(ex.getRequestURI().getRawQuery());
+        View view = View.byId(q.getOrDefault("view", ""));
+        double sx, sy;
+        try {
+            sx = Double.parseDouble(q.getOrDefault("sx", ""));
+            sy = Double.parseDouble(q.getOrDefault("sy", ""));
+        } catch (NumberFormatException e) {
+            send(ex, 400, "text/plain", "sx and sy are numbers".getBytes(StandardCharsets.UTF_8));
+            return;
+        }
+        JsonObject o = new JsonObject();
+        for (var e : service.maps().entrySet()) {
+            if (view != null && Double.isFinite(sx) && Double.isFinite(sy)
+                    && DioramaService.worldId(e.getKey()).equals(q.get("world"))) {
+                var hit = com.sablednah.diorama.render.Pick.at(e.getValue().store(), view, DioramaConfig.PIXELS_PER_BLOCK.get(), sx, sy);
+                if (hit != null) {
+                    o.addProperty("x", hit.x());
+                    o.addProperty("y", hit.y());
+                    o.addProperty("z", hit.z());
+                    var block = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(hit.block().getBlock());
+                    o.addProperty("block", block.toString());
+                    o.addProperty("blockName", pretty(block.getPath()));
+                    if (hit.biome() != null) {
+                        hit.biome().unwrapKey().ifPresent(k -> {
+                            o.addProperty("biome", k.identifier().toString());
+                            o.addProperty("biomeName", pretty(k.identifier().getPath()));
+                        });
+                    }
+                }
+                break;
+            }
+        }
+        json(ex, o);
+    }
+
+    /** {@code dark_oak_planks} → {@code Dark Oak Planks}. The server has no lang file to ask. */
+    private static String pretty(String path) {
+        StringBuilder sb = new StringBuilder();
+        for (String w : path.substring(path.lastIndexOf('/') + 1).split("_")) {
+            if (!w.isEmpty()) {
+                sb.append(sb.isEmpty() ? "" : " ").append(Character.toUpperCase(w.charAt(0))).append(w.substring(1));
+            }
+        }
+        return sb.toString();
+    }
+
+    private static Map<String, String> query(@org.jspecify.annotations.Nullable String raw) {
+        Map<String, String> out = new java.util.HashMap<>();
+        if (raw == null) {
+            return out;
+        }
+        for (String pair : raw.split("&")) {
+            int eq = pair.indexOf('=');
+            if (eq > 0) {
+                out.put(java.net.URLDecoder.decode(pair.substring(0, eq), StandardCharsets.UTF_8),
+                        java.net.URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8));
+            }
+        }
+        return out;
+    }
+
+    /** Coordinates are block corners and surface heights: whole numbers nearly always, so sent as such. */
+    private static JsonArray numbers(double[] v) {
+        JsonArray a = new JsonArray(v.length);
+        for (double d : v) {
+            if (d == Math.rint(d)) {
+                a.add((long) d);
+            } else {
+                a.add(Math.round(d * 10) / 10.0);
+            }
+        }
+        return a;
+    }
+
     private JsonObject markers() {
         JsonArray layers = new JsonArray();
         for (DioramaService.MarkerLayer layer : service.markers()) {
@@ -226,6 +309,41 @@ public final class MapWebServer {
                 list.add(j);
             }
             l.add("markers", list);
+            JsonArray regions = new JsonArray();
+            for (DioramaService.PlacedRegion pr : layer.regions()) {
+                var r = pr.region();
+                JsonObject j = new JsonObject();
+                j.addProperty("id", r.id());
+                j.addProperty("world", pr.world());
+                j.addProperty("label", r.label());
+                if (r.detail() != null) {
+                    j.addProperty("detail", r.detail());
+                }
+                j.addProperty("colour", String.format("#%06x", r.colour() & 0xFFFFFF));
+                j.add("anchor", numbers(pr.anchor()));
+                JsonArray lines = new JsonArray();
+                for (double[] line : pr.lines()) {
+                    lines.add(numbers(line));
+                }
+                j.add("lines", lines);
+                // The land itself, so the page can say which region the cursor is in.
+                if (r.shape() instanceof com.sablednah.diorama.api.Markers.Chunks c) {
+                    JsonArray chunks = new JsonArray(c.chunks().size() * 2);
+                    for (long k : c.chunks()) {
+                        chunks.add(net.minecraft.world.level.ChunkPos.getX(k));
+                        chunks.add(net.minecraft.world.level.ChunkPos.getZ(k));
+                    }
+                    j.add("chunks", chunks);
+                } else if (r.shape() instanceof com.sablednah.diorama.api.Markers.Polygon pg) {
+                    JsonArray corners = new JsonArray();
+                    for (double[] c : pg.corners()) {
+                        corners.add(numbers(c));
+                    }
+                    j.add("corners", corners);
+                }
+                regions.add(j);
+            }
+            l.add("regions", regions);
             layers.add(l);
         }
         JsonObject o = new JsonObject();

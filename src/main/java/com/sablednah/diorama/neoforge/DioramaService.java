@@ -85,10 +85,22 @@ public final class DioramaService {
 
     public record PlayerDot(String name, String world, double x, double y, double z) {}
 
-    /** One marker set as last sampled: every world's markers, tagged with the world's id. */
-    public record MarkerLayer(String id, String label, boolean shown, List<Placed> markers) {}
+    /** One marker set as last sampled: every world's markers and regions, tagged with the world's id. */
+    public record MarkerLayer(String id, String label, boolean shown, List<Placed> markers, List<PlacedRegion> regions) {}
 
     public record Placed(String world, Markers.Marker marker) {}
+
+    /** A region with its outline laid on the ground: polylines of flat {@code x, y, z} triples. */
+    public record PlacedRegion(String world, Markers.Region region, List<double[]> lines, double[] anchor) {}
+
+    /** What the server thread hands the coordinator: the sets' raw answers, nothing traced yet. */
+    record RawLayer(String id, String label, boolean shown, List<Placed> markers, List<RawRegion> regions) {}
+
+    record RawRegion(ResourceKey<Level> level, Markers.Region region) {}
+
+    /** Traced outlines, reused while the shape is unchanged, re-laid every minute for the terrain. */
+    private final Map<String, PlacedRegion> outlines = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, Long> outlineAge = new java.util.concurrent.ConcurrentHashMap<>();
 
     private volatile List<MarkerLayer> markers = List.of();
     /** Sets that have thrown once, so a broken one logs once rather than every five seconds. */
@@ -111,7 +123,12 @@ public final class DioramaService {
     static void start(MinecraftServer server) {
         stop();
         Markers.register(SpawnMarkers.INSTANCE);
+        Markers.register(OwnerRegions.INSTANCE);
+        com.sablednah.diorama.integration.Linked.clear();
+        com.sablednah.diorama.integration.FactionsTerritory.install(server, Lang::text);
+        com.sablednah.diorama.integration.StandardsPlaces.install(server, Lang::text);
         DioramaService service = new DioramaService(server);
+        OwnerRegions.INSTANCE.load(server, service.worldRoot);
         current = service;
         service.startWeb();
         service.coordinator.execute(service::setUp);
@@ -387,28 +404,102 @@ public final class DioramaService {
     }
 
     /** Once a second, from the server thread. */
-    /** Server thread, every five seconds. Each set reports its whole truth; nothing is kept between. */
+    /** Server thread, every five seconds: ask every set, then trace off the server thread. */
     void sampleMarkers() {
-        List<MarkerLayer> out = new ArrayList<>();
+        List<RawLayer> raw = collectMarkers();
+        coordinator.execute(() -> publishMarkers(raw));
+    }
+
+    /** Server thread. Each set reports its whole truth; nothing is kept between. */
+    List<RawLayer> collectMarkers() {
+        List<RawLayer> out = new ArrayList<>();
         for (Markers.MarkerSet set : Markers.sets()) {
             List<Placed> placed = new ArrayList<>();
+            List<RawRegion> regions = new ArrayList<>();
             try {
                 for (ServerLevel level : server.getAllLevels()) {
                     String world = worldId(level.dimension());
                     for (Markers.Marker m : set.markers(level.dimension())) {
                         placed.add(new Placed(world, m));
                     }
+                    for (Markers.Region r : set.regions(level.dimension())) {
+                        regions.add(new RawRegion(level.dimension(), r));
+                    }
                 }
-            } catch (RuntimeException e) {
+            } catch (RuntimeException | LinkageError e) {
                 if (complained.add(set.id())) {
                     Diorama.LOGGER.warn("Diorama: marker set {} failed; skipping it until it recovers", set.id(), e);
                 }
                 continue;
             }
             complained.remove(set.id());
-            out.add(new MarkerLayer(set.id(), set.label(), set.shownByDefault(), List.copyOf(placed)));
+            out.add(new RawLayer(set.id(), set.label(), set.shownByDefault(), List.copyOf(placed), List.copyOf(regions)));
         }
+        return out;
+    }
+
+    /** Coordinator thread: lay every region's outline on the ground and publish the lot. */
+    void publishMarkers(List<RawLayer> raw) {
+        long now = System.currentTimeMillis();
+        java.util.Set<String> live = new java.util.HashSet<>();
+        List<MarkerLayer> out = new ArrayList<>();
+        for (RawLayer layer : raw) {
+            List<PlacedRegion> regions = new ArrayList<>();
+            for (RawRegion rr : layer.regions()) {
+                MapRenderer map = maps.get(rr.level());
+                if (map == null) {
+                    continue;
+                }
+                String key = layer.id() + "|" + worldId(rr.level()) + "|" + rr.region().id();
+                live.add(key);
+                PlacedRegion cached = outlines.get(key);
+                boolean fresh = cached != null && sameShape(cached.region(), rr.region())
+                        && now - outlineAge.getOrDefault(key, 0L) < 60_000;
+                if (fresh) {
+                    // Label, colour or detail may have changed without the land moving.
+                    regions.add(new PlacedRegion(cached.world(), rr.region(), cached.lines(), cached.anchor()));
+                    continue;
+                }
+                PlacedRegion traced = trace(map, rr);
+                if (traced != null) {
+                    outlines.put(key, traced);
+                    outlineAge.put(key, now);
+                    regions.add(traced);
+                }
+            }
+            out.add(new MarkerLayer(layer.id(), layer.label(), layer.shown(), layer.markers(), List.copyOf(regions)));
+        }
+        outlines.keySet().retainAll(live);
+        outlineAge.keySet().retainAll(live);
         markers = List.copyOf(out);
+    }
+
+    private static @Nullable PlacedRegion trace(MapRenderer map, RawRegion rr) {
+        int sea = map.store().level().getSeaLevel();
+        String world = worldId(rr.level());
+        if (rr.region().shape() instanceof Markers.Chunks c) {
+            if (c.chunks().isEmpty()) {
+                return null;
+            }
+            return new PlacedRegion(world, rr.region(), com.sablednah.diorama.render.RegionOutline.trace(c.chunks(), map.store(), sea),
+                    com.sablednah.diorama.render.RegionOutline.anchor(c.chunks(), map.store(), sea));
+        }
+        Markers.Polygon p = (Markers.Polygon) rr.region().shape();
+        if (p.corners().size() < 3) {
+            return null;
+        }
+        return new PlacedRegion(world, rr.region(),
+                List.of(com.sablednah.diorama.render.RegionOutline.tracePolygon(p.corners(), p.y(), map.store(), sea)),
+                com.sablednah.diorama.render.RegionOutline.anchor(p.corners(), p.y(), map.store(), sea));
+    }
+
+    /** Records compare arrays by identity, so a polygon's corners are compared by content here. */
+    private static boolean sameShape(Markers.Region a, Markers.Region b) {
+        if (a.shape() instanceof Markers.Polygon pa && b.shape() instanceof Markers.Polygon pb) {
+            return java.util.Objects.equals(pa.y(), pb.y())
+                    && java.util.Arrays.deepEquals(pa.corners().toArray(), pb.corners().toArray());
+        }
+        return a.shape().equals(b.shape());
     }
 
     public List<MarkerLayer> markers() {

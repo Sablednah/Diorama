@@ -19,7 +19,13 @@ Open it in a browser. Nobody needs to install anything: it is a web page.
   if it is installed.
 - **By night too**, if you want it (`render.night`): lit by torches, lamps and lava under a moon,
   with a day/night switch on the page.
-- **Markers** from other mods, one switchable layer each — see [MARKERS-API.md](MARKERS-API.md).
+- **Markers and regions** from other mods, one switchable layer each — see [MARKERS-API.md](MARKERS-API.md).
+  Built in: **Factions ReForged** territory in banner colours (1.12.0+), **SableCraft Standards**
+  warps and `/spawn` (1.12.0+), and **owner regions** marked out with `/diorama region` or shipped
+  in a datapack. Outlines follow the ground, so a claim on a hill is outlined on the hill.
+- **An info bar** naming the block, biome and region under the cursor, with its real coordinates:
+  the server casts the renderer's own ray rather than guessing a height.
+- **H** hides every control for a clean view or a screenshot.
 - **Links you can send**: the address always names the world, view, place and zoom on screen.
 - Eight zoom levels, and a page that says why it is empty rather than looking broken.
 

@@ -13,6 +13,7 @@ import com.sablednah.diorama.model.Quad;
 import com.sablednah.diorama.render.IsoRenderer;
 import com.sablednah.diorama.render.MapRenderer;
 import com.sablednah.diorama.render.TileStore;
+import com.sablednah.diorama.DioramaConfig;
 import com.sablednah.diorama.render.View;
 import com.sablednah.diorama.world.ChunkSnap;
 import net.minecraft.core.BlockPos;
@@ -54,6 +55,10 @@ final class SelfTest {
         viewsLookAwayFromTheirCorner();
         messagesParse();
         markersSample(service);
+        regionsTrace(service);
+        pickFindsTheGround(service);
+        integrationsLinked();
+        factionsEndToEnd(service);
         spawnTileDraws(service);
         report();
     }
@@ -214,7 +219,7 @@ final class SelfTest {
         com.sablednah.diorama.api.Markers.register(good);
         com.sablednah.diorama.api.Markers.register(bad);
         try {
-            service.server().submit(service::sampleMarkers).join();
+            service.publishMarkers(service.server().submit(service::collectMarkers).join());
             var layers = service.markers();
             long goods = layers.stream().filter(l -> l.id().equals("selftest:good")).count();
             check(goods == 1, "a set registered twice under one id appears " + goods + " times");
@@ -227,8 +232,170 @@ final class SelfTest {
         } finally {
             com.sablednah.diorama.api.Markers.unregister("selftest:good");
             com.sablednah.diorama.api.Markers.unregister("selftest:bad");
-            service.server().submit(service::sampleMarkers).join();
+            service.publishMarkers(service.server().submit(service::collectMarkers).join());
         }
+    }
+
+    /**
+     * Outlines: a shared side between two chunks of one region draws nothing, every edge sits on
+     * the ground it borders, a polygon closes, and a region set reaches the published layers.
+     */
+    private static void regionsTrace(DioramaService service) {
+        var map = service.maps().get(net.minecraft.world.level.Level.OVERWORLD);
+        if (map == null) {
+            fail("no overworld map to trace regions on");
+            return;
+        }
+        var store = map.store();
+        store.scan();   // before anything asks for a chunk: an unscanned store answers "none" to all
+        int sea = store.level().getSeaLevel();
+        var spawn = store.level().getRespawnData().globalPos().pos();
+        int cx = spawn.getX() >> 4, cz = spawn.getZ() >> 4;
+        var one = java.util.Set.of(net.minecraft.world.level.ChunkPos.pack(cx, cz));
+        var two = java.util.Set.of(net.minecraft.world.level.ChunkPos.pack(cx, cz), net.minecraft.world.level.ChunkPos.pack(cx + 1, cz));
+        var lone = com.sablednah.diorama.render.RegionOutline.trace(one, store, sea);
+        var pair = com.sablednah.diorama.render.RegionOutline.trace(two, store, sea);
+        check(lone.size() == 4, "one chunk should have 4 edges, got " + lone.size());
+        check(pair.size() == 6, "two touching chunks should have 6 edges (the shared side is interior), got " + pair.size());
+        // The north edge's first point stands on the north-west column of the chunk.
+        var snap = store.get(cx, cz);
+        check(snap != null, "the spawn chunk is not in the store, so nothing below proves anything about the ground");
+        if (snap != null) {
+            int ground = snap.surface(cx * 16, cz * 16);
+            boolean onGround = lone.stream().anyMatch(l -> l[0] == cx * 16 && l[2] == cz * 16 && l[1] == ground);
+            check(onGround, "no edge starts on the ground at the chunk's corner (surface " + ground + ")");
+        }
+        var square = java.util.List.of(new double[] {0, 0}, new double[] {10, 0}, new double[] {10, 10}, new double[] {0, 10});
+        double[] ring = com.sablednah.diorama.render.RegionOutline.tracePolygon(square, 100.0, store, sea);
+        int n = ring.length;
+        check(n == 15 && ring[0] == ring[n - 3] && ring[2] == ring[n - 1] && ring[1] == 100 && ring[n - 2] == 100,
+                "a fixed-height square should close on itself at y 100: " + java.util.Arrays.toString(ring));
+
+        var regions = new com.sablednah.diorama.api.Markers.MarkerSet() {
+            public String id() { return "selftest:regions"; }
+            public String label() { return "Regions"; }
+            public java.util.Collection<com.sablednah.diorama.api.Markers.Marker> markers(net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> level) {
+                return java.util.List.of();
+            }
+            public java.util.Collection<com.sablednah.diorama.api.Markers.Region> regions(net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> level) {
+                return level == net.minecraft.world.level.Level.OVERWORLD
+                        ? java.util.List.of(new com.sablednah.diorama.api.Markers.Region("land", "Land", 0x00FF00, null, new com.sablednah.diorama.api.Markers.Chunks(two)),
+                                new com.sablednah.diorama.api.Markers.Region("line", "Too few corners", 0x00FF00, null,
+                                        new com.sablednah.diorama.api.Markers.Polygon(java.util.List.of(new double[] {0, 0}, new double[] {1, 1}), null)))
+                        : java.util.List.of();
+            }
+        };
+        com.sablednah.diorama.api.Markers.register(regions);
+        try {
+            service.publishMarkers(service.server().submit(service::collectMarkers).join());
+            var layer = service.markers().stream().filter(l -> l.id().equals("selftest:regions")).findFirst();
+            check(layer.isPresent() && layer.get().regions().size() == 1 && layer.get().regions().get(0).lines().size() == 6,
+                    "the region set should publish one 6-edge region and drop the 2-corner one: " + layer.map(DioramaService.MarkerLayer::regions).orElse(null));
+        } finally {
+            com.sablednah.diorama.api.Markers.unregister("selftest:regions");
+            service.publishMarkers(service.server().submit(service::collectMarkers).join());
+        }
+    }
+
+    /**
+     * The info bar's pick: the pixel where a column's top is drawn should name that column, for
+     * most columns round spawn (a taller neighbour in front can hide a few, which is right). And
+     * a pixel above the whole world names nothing.
+     */
+    private static void pickFindsTheGround(DioramaService service) {
+        var map = service.maps().get(net.minecraft.world.level.Level.OVERWORLD);
+        if (map == null) {
+            return;
+        }
+        var store = map.store();
+        store.scan();
+        int ppb = DioramaConfig.PIXELS_PER_BLOCK.get();
+        var spawn = store.level().getRespawnData().globalPos().pos();
+        int tried = 0, own = 0;
+        for (View view : View.values()) {
+            for (int i = -6; i <= 6; i += 3) {
+                for (int j = -6; j <= 6; j += 3) {
+                    int x = spawn.getX() + i, z = spawn.getZ() + j;
+                    var snap = store.get(x >> 4, z >> 4);
+                    if (snap == null || snap.surface(x, z) == Integer.MIN_VALUE) {
+                        continue;
+                    }
+                    int top = snap.surface(x, z);
+                    // The centre of the column's top face, projected exactly as the page projects.
+                    double vx = view.viewX(x + 0.5, z + 0.5), vz = view.viewZ(x + 0.5, z + 0.5);
+                    double sx = (vx - vz) * ppb / 2.0, sy = (vx + vz) * ppb / 4.0 - top * ppb / 2.0;
+                    var hit = com.sablednah.diorama.render.Pick.at(store, view, ppb, sx, sy);
+                    tried++;
+                    if (hit != null && hit.x() == x && hit.z() == z && hit.y() == top - 1) {
+                        own++;
+                    }
+                }
+            }
+        }
+        check(tried > 0 && own * 2 >= tried, "the pick named its own column " + own + " of " + tried + " times");
+        check(com.sablednah.diorama.render.Pick.at(store, View.SE, ppb, 0, -1e7) == null, "a pixel above the world picked a block");
+    }
+
+    /** Each integration whose mod is present must have said it linked, or said why not. */
+    private static void integrationsLinked() {
+        var status = com.sablednah.diorama.integration.Linked.status();
+        Diorama.LOGGER.info("Diorama self-test: integrations: {}", status);
+        for (String mod : List.of("factions", "standards")) {
+            if (net.neoforged.fml.ModList.get().isLoaded(mod)) {
+                String name = mod.equals("factions") ? "Factions" : "Standards";
+                check(status.stream().anyMatch(s -> s.startsWith(name) && s.contains("on the map")),
+                        name + " is installed but did not link: " + status);
+            }
+        }
+    }
+
+    /**
+     * A real faction, made and claimed through Factions' own public API, must reach the map as one
+     * region with the right outline. It is left in the dev world on purpose, to look at.
+     */
+    private static void factionsEndToEnd(DioramaService service) {
+        if (!net.neoforged.fml.ModList.get().isLoaded("factions")) {
+            return;
+        }
+        var server = service.server();
+        var level = server.overworld();
+        var spawn = level.getRespawnData().globalPos().pos();
+        int cx = (spawn.getX() >> 4) + 3, cz = spawn.getZ() >> 4;
+        String id;
+        try {
+            Class<?> api = Class.forName("com.sablednah.factions.api.FactionsApi");
+            var ensure = api.getMethod("ensureFaction", net.minecraft.server.MinecraftServer.class, String.class, String.class,
+                    java.util.UUID.class, boolean.class);
+            var claim = api.getMethod("claim", net.minecraft.server.MinecraftServer.class, net.minecraft.resources.ResourceKey.class,
+                    int.class, int.class, String.class);
+            id = server.submit(() -> {
+                try {
+                    @SuppressWarnings("unchecked")
+                    var made = (java.util.Optional<String>) ensure.invoke(null, server, "Diorama Survey", "DS",
+                            java.util.UUID.nameUUIDFromBytes("OfflinePlayer:DioramaSurvey".getBytes(java.nio.charset.StandardCharsets.UTF_8)), true);
+                    if (made.isPresent()) {
+                        // An L: three chunks, eight boundary edges.
+                        for (int[] c : new int[][] {{0, 0}, {1, 0}, {0, 1}}) {
+                            claim.invoke(null, server, net.minecraft.world.level.Level.OVERWORLD, cx + c[0], cz + c[1], made.get());
+                        }
+                    }
+                    return made.orElse(null);
+                } catch (ReflectiveOperationException e) {
+                    throw new IllegalStateException(e);
+                }
+            }).join();
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            fail("could not seed a faction through FactionsApi: " + e);
+            return;
+        }
+        check(id != null, "FactionsApi.ensureFaction made nothing");
+        service.publishMarkers(server.submit(service::collectMarkers).join());
+        var layer = service.markers().stream().filter(l -> l.id().equals("factions:territory")).findFirst();
+        var region = layer.flatMap(l -> l.regions().stream().filter(r -> r.region().id().equals(id)).findFirst());
+        check(region.isPresent() && region.get().region().label().equals("Diorama Survey [DS]")
+                        && region.get().lines().size() == 8 && region.get().region().detail() != null
+                        && region.get().region().detail().contains("3"),
+                "the seeded faction on the map: " + region.map(r -> r.region() + " with " + r.lines().size() + " edges").orElse("absent"));
     }
 
     /** The messages file reads back what it wrote, and only real colour codes are converted. */

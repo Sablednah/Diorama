@@ -48,6 +48,29 @@ public final class Lang {
         DEFAULTS.put("render.not_ready", "&cDiorama is not ready{detail}");
         DEFAULTS.put("marker.spawn.layer", "Spawn");
         DEFAULTS.put("marker.spawn", "World spawn");
+        DEFAULTS.put("status.linked", "&7  {line}");
+        DEFAULTS.put("marker.regions.layer", "Regions");
+        DEFAULTS.put("marker.factions.layer", "Factions");
+        DEFAULTS.put("marker.factions.chunks", "{n} chunks");
+        DEFAULTS.put("marker.factions.peaceful", "peaceful");
+        DEFAULTS.put("marker.warps.layer", "Warps");
+        DEFAULTS.put("marker.warps.spawn", "Spawn (/spawn)");
+        DEFAULTS.put("region.none", "{prefix} &7No regions yet. &f/diorama region create <id> [label]&7, then stand at each corner and &f/diorama region corner <id>&7.");
+        DEFAULTS.put("region.list_line", "&7  &f{id}&7 — {label} &7({corners} corners, {world})");
+        DEFAULTS.put("region.list_pack", "&7  &f{id}&7 — {label} &7(datapack, {world})");
+        DEFAULTS.put("region.bad_id", "&cRegion ids are lower-case letters, digits, - and _. &f{id}&c is none of those things.");
+        DEFAULTS.put("region.exists", "&cThere is already a region called &f{id}&c.");
+        DEFAULTS.put("region.created", "{prefix} &7region &f{id}&7 started. Walk to each corner in turn and run &f/diorama region corner {id}&7.");
+        DEFAULTS.put("region.wrong_world", "&cThat region is in {world}. Corners have to be in the same world, oddly enough.");
+        DEFAULTS.put("region.corner_more", "{prefix} &7corner {n} at &f{x}, {z}&7. {left} more before it is a shape.");
+        DEFAULTS.put("region.corner", "{prefix} &7corner {n} at &f{x}, {z}&7. On the map within a few seconds.");
+        DEFAULTS.put("region.no_corners", "&cIt has no corners to take back.");
+        DEFAULTS.put("region.undone", "{prefix} &7last corner removed; {n} left.");
+        DEFAULTS.put("region.bad_colour", "&c{colour} is not a colour. Try &f#e8a33d&c.");
+        DEFAULTS.put("region.saved", "{prefix} &7region &f{id}&7 saved.");
+        DEFAULTS.put("region.deleted", "{prefix} &7region &f{id}&7 deleted.");
+        DEFAULTS.put("region.unknown", "&cNo region called &f{id}&c. &f/diorama region list&c says what there is.");
+        DEFAULTS.put("region.from_pack", "&c{id} comes from a datapack. Edit the pack; this command only edits regions it made.");
         DEFAULTS.put("render.started", "{prefix} &7redrawing &f{world}&7. It runs in the background; &f/diorama status&7 says how far it got.");
     }
 

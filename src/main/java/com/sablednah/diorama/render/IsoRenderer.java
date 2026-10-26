@@ -204,12 +204,12 @@ public final class IsoRenderer {
     }
 
     /** The cell a ray at {@code p} is entering along {@code dir}. */
-    private static int enter(double p, int dir) {
+    static int enter(double p, int dir) {
         return dir < 0 ? (int) Math.ceil(p) - 1 : (int) Math.floor(p);
     }
 
     /** Distance along the ray to leave a cell of {@code size} whose low corner is {@code low}. */
-    private static double toEdge(double p, int low, int dir, int size) {
+    static double toEdge(double p, int low, int dir, int size) {
         return dir < 0 ? p - low : low + size - p;
     }
 

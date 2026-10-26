@@ -21,6 +21,14 @@ public final class DioramaEvents {
         DioramaService.start(event.getServer());
     }
 
+    /** {@code /reload}: fired once with no player, which is the only time to re-read datapacks. */
+    @SubscribeEvent
+    public static void datapacksReloaded(net.neoforged.neoforge.event.OnDatapackSyncEvent event) {
+        if (event.getPlayer() == null && DioramaService.current() != null) {
+            OwnerRegions.INSTANCE.reloadDatapacks(event.getPlayerList().getServer());
+        }
+    }
+
     @SubscribeEvent
     public static void serverStopping(ServerStoppingEvent event) {
         DioramaService.stop();

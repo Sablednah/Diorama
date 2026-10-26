@@ -141,14 +141,58 @@
   }
   label();
 
-  // Mouse → world, assuming sea level: a screen point is a whole line through the world, so the
-  // readout picks the height most of the map sits at and says so.
-  const coords = document.getElementById('coords');
-  map.on('mousemove', (e) => {
-    const y = world().seaLevel;
-    const [x, z] = unproject(e.latlng.lng * scale, -e.latlng.lat * scale, y);
-    coords.textContent = `x ${Math.round(x)}  z ${Math.round(z)}  (at y ${y})`;
+  // The info bar: what is under the cursor. A screen point is a whole diagonal line through the
+  // world, so the page cannot know the block — the server casts the renderer's own ray and says.
+  // One request in flight at a time; a faster mouse just skips the points in between.
+  const info = {
+    x: document.getElementById('ix'), y: document.getElementById('iy'), z: document.getElementById('iz'),
+    block: document.getElementById('iblock'), biome: document.getElementById('ibiome'), region: document.getElementById('iregion'),
+  };
+  let wanted = null, asking = false;
+  map.on('mousemove', (e) => { wanted = [e.latlng.lng * scale, -e.latlng.lat * scale]; ask(); });
+  async function ask() {
+    if (asking || !wanted) return;
+    const [sx, sy] = wanted;
+    wanted = null;
+    asking = true;
+    try {
+      const q = new URLSearchParams({ world: select.value, view, sx: sx.toFixed(1), sy: sy.toFixed(1) });
+      const at = await (await fetch('/api/at?' + q)).json();
+      showAt(at);
+    } catch { /* a dropped request is replaced by the next mouse move */ }
+    asking = false;
+    if (wanted) ask();
+  }
+  function showAt(at) {
+    const has = at && at.x !== undefined;
+    info.x.textContent = has ? at.x : '—';
+    info.y.textContent = has ? at.y : '—';
+    info.z.textContent = has ? at.z : '—';
+    info.block.textContent = has ? at.blockName : '';
+    info.block.title = has ? at.block : '';
+    info.biome.textContent = has && at.biomeName ? at.biomeName : '';
+    info.biome.title = has && at.biome ? at.biome : '';
+    info.region.textContent = has ? regionsAt(at.x, at.z).join(' · ') : '';
+  }
+
+  // Hide every control for a clean view or a screenshot; H, or the corner button, brings them back.
+  const hideButton = document.getElementById('hide-gui'), showButton = document.getElementById('show-gui');
+  function setGui(shown) {
+    document.body.classList.toggle('gui-hidden', !shown);
+    showButton.hidden = shown;
+    try { localStorage.setItem('diorama.gui', shown ? '1' : '0'); } catch { /* private window */ }
+  }
+  hideButton.addEventListener('click', () => setGui(false));
+  showButton.addEventListener('click', () => setGui(true));
+  document.addEventListener('keydown', (e) => {
+    if (e.target instanceof HTMLSelectElement || e.target instanceof HTMLInputElement) return;
+    if (e.key === 'h' || e.key === 'H') setGui(document.body.classList.contains('gui-hidden'));
   });
+  setGui((() => { try { return localStorage.getItem('diorama.gui') !== '0'; } catch { return true; } })());
+
+  // Region labels only once the land is big enough on screen to read them against.
+  const farCheck = () => map.getContainer().classList.toggle('far', map.getZoom() < native - 1);
+  map.on('zoomend', farCheck);
 
   async function refreshPlayers() {
     let data;
@@ -163,38 +207,114 @@
   }
   setInterval(refreshPlayers, 2000);
 
-  // Markers: one toggleable layer per set another mod (or Diorama) registered. Labels are put in
-  // with textContent, never as HTML — they come from other mods and, through them, from players.
+  // Markers and regions: one layer per set another mod (or Diorama) registered, each switchable
+  // in the Layers list. Labels go in with textContent, never as HTML — they come from other mods
+  // and, through them, from whatever players typed.
   const markerLayers = new Map();
-  const toggles = L.control.layers(null, null, { collapsed: true, position: 'topright' });
-  let togglesShown = false;
+  const layersButton = document.getElementById('layers'), layerList = document.getElementById('layer-list');
+  layersButton.addEventListener('click', () => {
+    layerList.hidden = !layerList.hidden;
+    layersButton.setAttribute('aria-expanded', String(!layerList.hidden));
+  });
+  document.addEventListener('click', (e) => {
+    if (!layerList.hidden && !e.target.closest('.layers-wrap')) { layerList.hidden = true; layersButton.setAttribute('aria-expanded', 'false'); }
+  });
+  const offLayers = (() => { try { return new Set(JSON.parse(localStorage.getItem('diorama.layersOff') || '[]')); } catch { return new Set(); } })();
+  const onLayers = (() => { try { return new Set(JSON.parse(localStorage.getItem('diorama.layersOn') || '[]')); } catch { return new Set(); } })();
+  function saveLayers() {
+    try {
+      localStorage.setItem('diorama.layersOff', JSON.stringify([...offLayers]));
+      localStorage.setItem('diorama.layersOn', JSON.stringify([...onLayers]));
+    } catch { /* private window */ }
+  }
   const tip = (m) => {
     const el = document.createElement('div');
     const b = document.createElement('strong'); b.textContent = m.label; el.appendChild(b);
     if (m.detail) { const d = document.createElement('div'); d.textContent = m.detail; el.appendChild(d); }
     return el;
   };
+  // What the bar asks: every shown region in this world containing x, z.
+  let areas = [];
+  function regionsAt(x, z) {
+    const out = [];
+    for (const a of areas) {
+      if (!a.entry.on) continue;
+      if (a.chunks ? a.chunks.has((x >> 4) + ',' + (z >> 4)) : inside(a.corners, x + 0.5, z + 0.5)) out.push(a.label);
+    }
+    return out;
+  }
+  function inside(poly, x, z) {
+    let hit = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const [xi, zi] = poly[i], [xj, zj] = poly[j];
+      if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) hit = !hit;
+    }
+    return hit;
+  }
+  function entryFor(set) {
+    let entry = markerLayers.get(set.id);
+    if (entry) return entry;
+    entry = { group: L.layerGroup(), on: onLayers.has(set.id) || (set.shown && !offLayers.has(set.id)) };
+    markerLayers.set(set.id, entry);
+    if (entry.on) entry.group.addTo(map);
+    const row = document.createElement('label');
+    const box = document.createElement('input'); box.type = 'checkbox'; box.checked = entry.on;
+    const sw = document.createElement('span'); sw.className = 'swatch'; entry.swatch = sw;
+    const name = document.createElement('span'); name.textContent = set.label;
+    row.append(box, sw, name);
+    box.addEventListener('change', () => {
+      entry.on = box.checked;
+      if (entry.on) { entry.group.addTo(map); offLayers.delete(set.id); onLayers.add(set.id); }
+      else { map.removeLayer(entry.group); onLayers.delete(set.id); offLayers.add(set.id); }
+      saveLayers();
+    });
+    layerList.appendChild(row);
+    layersButton.hidden = false;
+    return entry;
+  }
   async function refreshMarkers() {
     let data;
     try { data = await (await fetch('/api/markers')).json(); } catch { return; }
+    const nextAreas = [];
     for (const set of data.layers) {
-      let entry = markerLayers.get(set.id);
-      if (!entry) {
-        entry = { group: L.layerGroup() };
-        markerLayers.set(set.id, entry);
-        toggles.addOverlay(entry.group, set.label);
-        if (set.shown) entry.group.addTo(map);
-      }
+      const entry = entryFor(set);
       entry.group.clearLayers();
+      let colour = null;
       for (const m of set.markers) {
         if (m.world !== select.value) continue;
+        colour = colour || m.colour;
         const icon = L.divIcon({ className: 'marker', html: '<i></i>', iconSize: [12, 12] });
         const mk = L.marker(toLatLng(m.x, m.y, m.z), { icon, keyboard: false }).bindTooltip(tip(m), { direction: 'top', offset: [0, -6] });
         mk.on('add', () => { const e = mk.getElement(); if (e) e.style.setProperty('--c', m.colour); });
         mk.addTo(entry.group);
       }
+      for (const r of set.regions || []) {
+        if (r.world !== select.value) continue;
+        colour = colour || r.colour;
+        // A dark under-stroke keeps a pale border (white = a faction with no banner yet) visible
+        // on snow and sand.
+        for (const line of r.lines) {
+          const pts = [];
+          for (let i = 0; i + 2 < line.length; i += 3) pts.push(toLatLng(line[i], line[i + 1], line[i + 2]));
+          L.polyline(pts, { color: '#000', opacity: 0.45, weight: 4, interactive: false }).addTo(entry.group);
+          L.polyline(pts, { color: r.colour, weight: 2 }).bindTooltip(tip(r), { sticky: true }).addTo(entry.group);
+        }
+        const [ax, ay, az] = r.anchor;
+        L.marker(toLatLng(ax, ay, az), { icon: L.divIcon({ className: 'region-anchor', html: '', iconSize: [0, 0] }), interactive: false, keyboard: false })
+          .bindTooltip(r.label, { permanent: true, direction: 'center', className: 'region-label' })
+          .addTo(entry.group);
+        const area = { entry, label: r.label };
+        if (r.chunks) {
+          area.chunks = new Set();
+          for (let i = 0; i + 1 < r.chunks.length; i += 2) area.chunks.add(r.chunks[i] + ',' + r.chunks[i + 1]);
+        } else if (r.corners) {
+          area.corners = r.corners;
+        }
+        nextAreas.push(area);
+      }
+      if (entry.swatch && colour) entry.swatch.style.setProperty('--c', colour);
     }
-    if (!togglesShown && markerLayers.size > 0) { toggles.addTo(map); togglesShown = true; }
+    areas = nextAreas;
   }
   setInterval(refreshMarkers, 5000);
 
@@ -214,4 +334,5 @@
   refreshState();
 
   show(true);
+  farCheck();
 })();

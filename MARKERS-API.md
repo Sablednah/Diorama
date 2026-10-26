@@ -1,11 +1,11 @@
 # The markers API
 
-Put things on the map — homes, warps, claims, quest givers — from another mod.
+Put things on the map — points and areas — from another mod.
 
-**Status: built 2026-10-26. One consumer: Diorama's own spawn marker.** No other mod reports into
-it yet; Standards (warps, homes) and Factions (claims, standards) are the intended first ones, and
-that is their sessions' call. Until one does, the seam has only been driven by its own self-test —
-the series' "first real input" risk applies in full.
+**Status: built 2026-10-26; regions added the same day.** Consumers, all inside Diorama:
+its own spawn marker, owner regions (`/diorama region` and datapacks), **Factions territory**
+(reads `FactionsApi`, Factions 1.12.0+) and **Standards warps and `/spawn`** (reads
+`api.places.Places`, Standards 1.12.0+). No outside mod registers a set itself yet.
 
 ## Using it
 
@@ -48,8 +48,49 @@ That is all of it. There is no add, move or remove.
   come from other mods and, through them, from whatever players typed.
 - **Each set is a layer** the viewer can switch off; `shownByDefault()` picks whether it starts on.
 
-## What it is not
+## Regions
 
-Not a way to draw areas (claims as filled regions) — markers are points. Areas are the obvious next
-shape, and the decision on how to draw a region on an isometric map (outline at what height?) is
-worth making with a real consumer in hand rather than guessed now.
+A set can also return `regions(level)`: areas, each a `Markers.Region(id, label, colour, detail,
+shape)`. Two shapes, because land comes two ways:
+
+- `Markers.Chunks(Set<Long>)` — whole chunks, packed with `ChunkPos.pack`. Claims.
+- `Markers.Polygon(List<double[]{x, z}>, Double y)` — corners in order, like Dynmap's area markers.
+  `y` null follows the ground; a number draws it flat at that height.
+
+**How it is drawn, decided with Factions in hand:** an outline, never a fill, laid on the ground.
+On an isometric map one x, z is a different screen point at every height, so a border at sea level
+slides off a hilltop claim. Every edge is walked a block at a time and placed on the column just
+inside the land, with a vertical step wherever the ground steps — the same rule as Factions' border
+walls in game. A side shared by two chunks of one region is interior and draws nothing.
+
+Tracing happens on Diorama's coordinator thread, not the server thread, from the chunk copies it
+already holds; an outline is cached while its shape is unchanged and re-laid every minute so it
+follows building and digging. The page also gets each region's land, so the info bar can name the
+region under the cursor.
+
+## Owner regions
+
+`/diorama region create <id> [label]`, then stand at each corner and `/diorama region corner <id>`;
+`undo`, `label`, `detail`, `colour #e8a33d`, `height <y>|ground`, `delete`, `list`. Ops only.
+Saved to `<world>/diorama/regions.json`.
+
+Datapacks: `data/<namespace>/diorama/regions/<name>.json`, same format, re-read on `/reload`:
+
+```json
+{ "label": "Old Town", "dimension": "minecraft:overworld", "colour": "#e8a33d",
+  "detail": "Founded by the first three players",
+  "corners": [[-40, -80], [40, -80], [40, 0], [-40, 0]] }
+```
+
+`"chunks": [[cx, cz], …]` may replace `corners`; `"y": 72` pins the height.
+
+## What the integrations show, and what they refuse to
+
+- **Factions**: territory in the banner colour, "name [tag]", "peaceful · N chunks" — exactly what
+  its own JourneyMap layer shows every player. **Not homes, not where a standard stands**: a public
+  web map pointing at the flag is a raid planner.
+- **Standards**: warps and `/spawn`, which are public by design. **Not homes** — Standards' API does
+  not offer them, and should not.
+
+Both are reached by reflection, once, at start; an older mod leaves its layer off and
+`/diorama status` says which version is needed rather than the layer silently never appearing.

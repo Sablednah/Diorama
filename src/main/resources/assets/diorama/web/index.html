@@ -9,14 +9,25 @@
 </head>
 <body>
 <div id="map"></div>
-<div id="bar">
+<div id="bar" class="gui">
   <strong>Diorama</strong>
   <select id="world" aria-label="World"></select>
   <button id="turn-left" type="button" title="Turn the view (Q)" aria-label="Turn the view left">⟲</button>
   <span id="facing"></span>
   <button id="turn-right" type="button" title="Turn the view (E)" aria-label="Turn the view right">⟳</button>
   <button id="night" type="button" aria-label="Day or night" hidden>☀</button>
-  <span id="coords"></span>
+  <span class="layers-wrap">
+    <button id="layers" type="button" title="Show or hide layers" aria-expanded="false" aria-controls="layer-list" hidden>Layers ▾</button>
+    <div id="layer-list" hidden></div>
+  </span>
+  <button id="hide-gui" type="button" title="Hide the controls (H)" aria-label="Hide the controls">⤢</button>
+</div>
+<button id="show-gui" type="button" title="Show the controls (H)" aria-label="Show the controls" hidden>⤡</button>
+<div id="info" class="gui" aria-live="off">
+  <span class="pos"><span class="k">x</span><span id="ix" class="n">—</span><span class="k">y</span><span id="iy" class="n">—</span><span class="k">z</span><span id="iz" class="n">—</span></span>
+  <span id="iblock" class="what"></span>
+  <span id="ibiome" class="what"></span>
+  <span id="iregion" class="what"></span>
 </div>
 <div id="notice" hidden></div>
 <script src="/web/leaflet/leaflet.js"></script>

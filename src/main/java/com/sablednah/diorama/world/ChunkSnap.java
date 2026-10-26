@@ -162,6 +162,14 @@ public final class ChunkSnap {
         return sections[i].getNoiseBiome((x & 15) >> 2, (y & 15) >> 2, (z & 15) >> 2);
     }
 
+    /**
+     * One above the highest non-air block in the column at world {@code x, z} (which must be in
+     * this chunk) — the height you would stand at. {@code Integer.MIN_VALUE} for an empty column.
+     */
+    public int surface(int x, int z) {
+        return columnTop(x & 15, z & 15);
+    }
+
     private int columnTop(int x, int z) {
         for (int i = sections.length - 1; i >= 0; i--) {
             LevelChunkSection s = sections[i];

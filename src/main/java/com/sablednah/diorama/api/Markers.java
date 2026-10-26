@@ -64,7 +64,42 @@ public final class Markers {
          * logged once.
          */
         Collection<Marker> markers(ResourceKey<Level> level);
+
+        /**
+         * Areas in {@code level} right now. Same thread and rules as {@link #markers}. Diorama
+         * lays each outline on the terrain itself, from the blocks it already holds, so a set
+         * reports land and never heights.
+         */
+        default Collection<Region> regions(ResourceKey<Level> level) {
+            return java.util.List.of();
+        }
     }
+
+    /**
+     * An area on the map: a faction's territory, a town, a park, a protected zone. Drawn as its
+     * outline in {@code colour}, laid on the ground along every edge, so a border climbing a hill
+     * climbs it on the map too; its label hangs inside it.
+     */
+    public record Region(String id, String label, int colour, @Nullable String detail, Shape shape) {}
+
+    /** What a region covers. Two shapes, because land comes two ways. */
+    public sealed interface Shape permits Chunks, Polygon {}
+
+    /**
+     * Whole chunks — the way claims come.
+     *
+     * @param chunks  {@link net.minecraft.world.level.ChunkPos#pack(int, int)} of every chunk in it
+     */
+    public record Chunks(java.util.Set<Long> chunks) implements Shape {}
+
+    /**
+     * A polygon of block corners, in order, the way an owner marks out a town (Dynmap's area
+     * markers). The last corner joins back to the first.
+     *
+     * @param corners {@code {x, z}} pairs, at least three
+     * @param y       a fixed height for the whole outline, or {@code null} to follow the ground
+     */
+    public record Polygon(java.util.List<double[]> corners, @Nullable Double y) implements Shape {}
 
     /**
      * One marker. {@code y} matters: an isometric map puts a point at a different place on screen
