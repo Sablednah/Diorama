@@ -1,10 +1,12 @@
 package com.sablednah.diorama.neoforge;
 
+import com.sablednah.diorama.DioramaConfig;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
+import net.neoforged.neoforge.event.level.BlockEvent;
 import net.neoforged.neoforge.event.level.ChunkDataEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
@@ -36,11 +38,27 @@ public final class DioramaEvents {
         }
     }
 
+    /**
+     * Nearly every real block change notifies its neighbours: placing, breaking, pistons,
+     * explosions, flowing fluid. Changes made without a neighbour update (crop growth, {@code /fill})
+     * still reach the map, at the next save. Cancelled or not, the block has already changed.
+     */
+    @SubscribeEvent(receiveCanceled = true)
+    public static void blockChanged(BlockEvent.NeighborNotifyEvent event) {
+        DioramaService s = DioramaService.current();
+        if (s != null && event.getLevel() instanceof ServerLevel level) {
+            s.blockChanged(level, event.getPos().getX(), event.getPos().getZ());
+        }
+    }
+
     @SubscribeEvent
     public static void tick(ServerTickEvent.Post event) {
         DioramaService s = DioramaService.current();
         if (s != null && event.getServer().getTickCount() % 20 == 0) {
             s.samplePlayers();
+            if (DioramaConfig.LIVE_UPDATES.get()) {
+                s.snapshotTouched();
+            }
         }
     }
 

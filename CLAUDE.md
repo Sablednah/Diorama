@@ -132,10 +132,17 @@ walk itself (`Quad.intersect`) was fourth. A full render went 80 s → 16 s.
 
 ### 4. Nothing runs on the server thread
 
-- **Live updates** come from `ChunkDataEvent.Save`, whose `SerializableChunkData` is **already a
+- **Saves** arrive through `ChunkDataEvent.Save`, whose `SerializableChunkData` is **already a
   copy** the game made for its own save. We keep that reference — no copying — and the coordinator
-  thread turns it into a `ChunkSnap`. Consequence: the map follows the world **at save time**
-  (autosave or chunk unload), not per block. That is deliberate for now.
+  thread turns it into a `ChunkSnap`.
+- **Live changes** do not wait for a save (up to five minutes). `BlockEvent.NeighborNotifyEvent`
+  fires for nearly every real change — placing, breaking, pistons, explosions, flowing fluid, and
+  non-`strict` `/setblock` and `/fill` — and only records the chunk. Once a second the tick copies
+  up to `render.liveChunksPerSecond` of them with the game's own `SerializableChunkData.copyOf`
+  and queues the copy **exactly as if a save had handed it over**, so there is one path from a
+  chunk to a tile. The budget is what stops a TNT crater becoming a server-thread stall; the rest
+  wait, oldest first. Changes made with no neighbour update (crop growth, `strict` commands) still
+  arrive at the next save. Measured: a `/fill` with no save reached its tile in 8 s.
 - **Stored chunks** are read through the game's own `ChunkMap.read` (the `IOWorker`, which already
   serialises against pending writes), upgraded with the datafixer if older, and parsed with
   `SerializableChunkData.parse`. We only ever read a region file's 4 KiB **header** ourselves, to
@@ -181,6 +188,20 @@ players are re-sampled every second. A Standards whose API moved fails **closed*
 `messages.known` exactly as Standards' decision 6 describes. `&` codes are converted in templates
 only, never in anything a player typed.
 
+### 8. Single player — verified 2026-10-26 on Vivo
+
+Run on Vivo's private display `:8` (claimed in `~/dev/README.md` there; launcher
+`~/dev/dio-client.sh`) with a copy of the dev world: the integrated server took its textures from
+the game's own jar (4 asset sources, **no download**), bound **`127.0.0.1:8124` only** — refused
+from another machine — sent `Diorama: http://127.0.0.1:8124/` to chat on join, and drew the
+overworld in all four views (277 s, sharing 8 cores with an llvmpipe client).
+
+`./gradlew runClient -PquickPlay=<save>` opens a world with no menus, **except** two screens that
+quick-play waits behind, each needing one click: the first-launch accessibility screen
+(*Continue*), and, for a world with experimental settings (the CityWorld dev world has them),
+*I Know What I'm Doing!*. Stop the client when done, by its working directory
+(`/proc/<pid>/cwd` = `…/Diorama/runClient-mc26.2`), never by a pattern in your own command line.
+
 ## Gotchas already paid for
 
 - ⚠ **Gradle's file-system watching does not work on `/mnt/d`** (drvfs sends no inotify). A newly
@@ -195,9 +216,7 @@ only, never in anything a player typed.
 ## Known gaps, in rough priority
 
 - A top-down flat view for very low zooms.
-- Per-block updates between saves.
 - Lighting: everything is drawn at noon. Sky light is in `SectionData` already.
 - Quads that extend outside their voxel (rare) are clipped to it.
 - Markers: Standards warps/homes, Factions claims, CityWorld districts — via a seam, as with
   JourneyMap (`../SableCraft-Standards/MAP-API.md`).
-- Single player (`runClient`) is written but has not been run: it needs a display.

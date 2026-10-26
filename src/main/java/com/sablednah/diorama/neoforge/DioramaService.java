@@ -68,6 +68,11 @@ public final class DioramaService {
     private volatile Map<ResourceKey<Level>, MapRenderer> maps = Map.of();
     private final ConcurrentLinkedQueue<Saved> saved = new ConcurrentLinkedQueue<>();
     private volatile List<PlayerDot> players = List.of();
+    /**
+     * Chunks with a block changed since we last copied them, oldest first. Server thread only: the
+     * event that fills it and the tick that drains it both run there.
+     */
+    private final Map<ResourceKey<Level>, java.util.LinkedHashSet<Long>> touched = new java.util.HashMap<>();
     private volatile @Nullable String fullRender;
 
     private final ExecutorService pool;
@@ -219,6 +224,49 @@ public final class DioramaService {
     // ---------------------------------------------------------------- work
 
     /** From the save hook, on the server thread: queue it and return. */
+    /** Server thread. A block changed: remember its chunk, cheaply. */
+    void blockChanged(ServerLevel level, int blockX, int blockZ) {
+        if (state != State.READY) {
+            return;
+        }
+        touched.computeIfAbsent(level.dimension(), k -> new java.util.LinkedHashSet<>())
+                .add(ChunkPos.pack(blockX >> 4, blockZ >> 4));
+    }
+
+    /**
+     * Server thread, once a second. Copy up to {@code render.liveChunksPerSecond} touched chunks the
+     * way a save does, and queue the copies exactly as if a save had handed them over. The budget
+     * is what keeps a TNT crater or a long piston run from turning into a server-thread stall; the
+     * rest wait their turn, oldest first, and a later save delivers anything that is still waiting.
+     */
+    void snapshotTouched() {
+        if (touched.isEmpty()) {
+            return;
+        }
+        int budget = DioramaConfig.LIVE_CHUNKS_PER_SECOND.get();
+        var levels = touched.entrySet().iterator();
+        while (levels.hasNext() && budget > 0) {
+            var e = levels.next();
+            ServerLevel level = server.getLevel(e.getKey());
+            var chunks = e.getValue().iterator();
+            while (chunks.hasNext() && budget > 0) {
+                long key = chunks.next();
+                chunks.remove();
+                if (level == null) {
+                    continue;
+                }
+                var chunk = level.getChunkSource().getChunkNow(ChunkPos.getX(key), ChunkPos.getZ(key));
+                if (chunk != null && chunk.canBeSerialized()) {
+                    saved.add(new Saved(e.getKey(), chunk.getPos(), SerializableChunkData.copyOf(level, chunk)));
+                    budget--;
+                }
+            }
+            if (e.getValue().isEmpty()) {
+                levels.remove();
+            }
+        }
+    }
+
     void chunkSaved(ResourceKey<Level> level, ChunkPos pos, SerializableChunkData data) {
         if (state == State.READY || state == State.STARTING) {
             saved.add(new Saved(level, pos, data));

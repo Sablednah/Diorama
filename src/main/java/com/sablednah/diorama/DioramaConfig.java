@@ -28,6 +28,8 @@ public final class DioramaConfig {
     public static final ModConfigSpec.IntValue UPDATE_SECONDS;
     public static final ModConfigSpec.IntValue CHUNK_CACHE;
     public static final ModConfigSpec.ConfigValue<List<? extends String>> VIEWS;
+    public static final ModConfigSpec.BooleanValue LIVE_UPDATES;
+    public static final ModConfigSpec.IntValue LIVE_CHUNKS_PER_SECOND;
 
     static {
         ModConfigSpec.Builder b = new ModConfigSpec.Builder();
@@ -67,8 +69,14 @@ public final class DioramaConfig {
                         "Width of one block on the most zoomed-in tiles. 32 shows every texel of a top face;",
                         "16 renders four times faster and still reads well. Changing it invalidates every tile.")
                 .defineInRange("pixelsPerBlock", 32, 8, 64);
-        UPDATE_SECONDS = b.comment("How often changed chunks are re-rendered. Chunks reach the map when the server saves them.")
+        UPDATE_SECONDS = b.comment("How often changed chunks are re-rendered.")
                 .defineInRange("updateSeconds", 15, 1, 3600);
+        LIVE_UPDATES = b.comment(
+                        "Copy a chunk for the map as soon as a block in it changes, instead of waiting for the",
+                        "server to save it (up to five minutes). The copy is made on the server thread.")
+                .define("liveUpdates", true);
+        LIVE_CHUNKS_PER_SECOND = b.comment("At most this many changed chunks are copied per second; the rest wait their turn.")
+                .defineInRange("liveChunksPerSecond", 32, 1, 1024);
         CHUNK_CACHE = b.comment("Chunks held in memory while rendering. More is faster for a full render and costs heap.")
                 .defineInRange("chunkCache", 4096, 256, 65536);
         VIEWS = b.comment(

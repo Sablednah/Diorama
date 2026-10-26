@@ -9,8 +9,9 @@ Open it in a browser. Nobody needs to install anything: it is a web page.
   game renders from, so stairs, fences, panes, slabs and modded blocks look like themselves.
 - **Single player too.** The same jar serves your map on `http://127.0.0.1:8124/` while you play,
   and tells you the link when you join. It is never published to your network.
-- **Follows the world.** Chunks reach the map when the server saves them; nothing runs on the
-  server thread, so the map can fall behind but the server cannot.
+- **Follows the world.** A block placed, broken, blown up or pushed reaches the map in seconds.
+  The copy is budgeted per second and drawing never runs on the server thread, so the map can fall
+  behind but the server cannot.
 - **Walk round it.** Four camera corners — turn with ⟲/⟳ or Q/E — so the street behind a tower is
   never hidden from every side.
 - **Live player positions**, minus anyone the game is hiding: spectators, the invisible, and anyone
