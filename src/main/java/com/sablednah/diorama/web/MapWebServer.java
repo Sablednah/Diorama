@@ -36,6 +36,7 @@ import net.minecraft.server.level.ServerLevel;
  * <li>{@code /} and {@code /web/...} — the page, from the mod jar.</li>
  * <li>{@code /tiles/<world>/<view>/<level>/<x>_<y>.png} — from the save folder.</li>
  * <li>{@code /api/config} — worlds, tile geometry, and whether the map can draw at all.</li>
+ * <li>{@code /api/markers} — every {@link com.sablednah.diorama.api.Markers} set, as last sampled.</li>
  * <li>{@code /api/players} — where everyone is, once a second.</li>
  * </ul>
  */
@@ -92,6 +93,10 @@ public final class MapWebServer {
             }
             if (path.equals("/api/players")) {
                 json(ex, players());
+                return;
+            }
+            if (path.equals("/api/markers")) {
+                json(ex, markers());
                 return;
             }
             Matcher tile = TILE.matcher(path);
@@ -193,6 +198,37 @@ public final class MapWebServer {
             list.add(j);
         }
         o.add("players", list);
+        return o;
+    }
+
+    private JsonObject markers() {
+        JsonArray layers = new JsonArray();
+        for (DioramaService.MarkerLayer layer : service.markers()) {
+            JsonObject l = new JsonObject();
+            l.addProperty("id", layer.id());
+            l.addProperty("label", layer.label());
+            l.addProperty("shown", layer.shown());
+            JsonArray list = new JsonArray();
+            for (DioramaService.Placed p : layer.markers()) {
+                var m = p.marker();
+                JsonObject j = new JsonObject();
+                j.addProperty("id", m.id());
+                j.addProperty("world", p.world());
+                j.addProperty("label", m.label());
+                if (m.detail() != null) {
+                    j.addProperty("detail", m.detail());
+                }
+                j.addProperty("x", m.x());
+                j.addProperty("y", m.y());
+                j.addProperty("z", m.z());
+                j.addProperty("colour", String.format("#%06x", m.colour() & 0xFFFFFF));
+                list.add(j);
+            }
+            l.add("markers", list);
+            layers.add(l);
+        }
+        JsonObject o = new JsonObject();
+        o.add("layers", layers);
         return o;
     }
 

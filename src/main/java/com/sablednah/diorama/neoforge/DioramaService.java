@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import com.sablednah.diorama.Diorama;
 import com.sablednah.diorama.DioramaConfig;
+import com.sablednah.diorama.api.Markers;
 import com.sablednah.diorama.asset.AssetSource;
 import com.sablednah.diorama.asset.Assets;
 import com.sablednah.diorama.asset.ClientJarDownload;
@@ -84,6 +85,15 @@ public final class DioramaService {
 
     public record PlayerDot(String name, String world, double x, double y, double z) {}
 
+    /** One marker set as last sampled: every world's markers, tagged with the world's id. */
+    public record MarkerLayer(String id, String label, boolean shown, List<Placed> markers) {}
+
+    public record Placed(String world, Markers.Marker marker) {}
+
+    private volatile List<MarkerLayer> markers = List.of();
+    /** Sets that have thrown once, so a broken one logs once rather than every five seconds. */
+    private final java.util.Set<String> complained = new java.util.HashSet<>();
+
     private DioramaService(MinecraftServer server) {
         this.server = server;
         this.worldRoot = server.getWorldPath(LevelResource.ROOT);
@@ -100,6 +110,7 @@ public final class DioramaService {
 
     static void start(MinecraftServer server) {
         stop();
+        Markers.register(SpawnMarkers.INSTANCE);
         DioramaService service = new DioramaService(server);
         current = service;
         service.startWeb();
@@ -375,6 +386,34 @@ public final class DioramaService {
     }
 
     /** Once a second, from the server thread. */
+    /** Server thread, every five seconds. Each set reports its whole truth; nothing is kept between. */
+    void sampleMarkers() {
+        List<MarkerLayer> out = new ArrayList<>();
+        for (Markers.MarkerSet set : Markers.sets()) {
+            List<Placed> placed = new ArrayList<>();
+            try {
+                for (ServerLevel level : server.getAllLevels()) {
+                    String world = worldId(level.dimension());
+                    for (Markers.Marker m : set.markers(level.dimension())) {
+                        placed.add(new Placed(world, m));
+                    }
+                }
+            } catch (RuntimeException e) {
+                if (complained.add(set.id())) {
+                    Diorama.LOGGER.warn("Diorama: marker set {} failed; skipping it until it recovers", set.id(), e);
+                }
+                continue;
+            }
+            complained.remove(set.id());
+            out.add(new MarkerLayer(set.id(), set.label(), set.shownByDefault(), List.copyOf(placed)));
+        }
+        markers = List.copyOf(out);
+    }
+
+    public List<MarkerLayer> markers() {
+        return markers;
+    }
+
     void samplePlayers() {
         List<PlayerDot> dots = new ArrayList<>();
         for (ServerPlayer p : server.getPlayerList().getPlayers()) {

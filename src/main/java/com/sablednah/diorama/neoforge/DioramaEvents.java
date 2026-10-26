@@ -56,6 +56,9 @@ public final class DioramaEvents {
         DioramaService s = DioramaService.current();
         if (s != null && event.getServer().getTickCount() % 20 == 0) {
             s.samplePlayers();
+            if (event.getServer().getTickCount() % 100 == 0) {
+                s.sampleMarkers();
+            }
             if (DioramaConfig.LIVE_UPDATES.get()) {
                 s.snapshotTouched();
             }

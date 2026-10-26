@@ -53,6 +53,7 @@ final class SelfTest {
         stairsAreNotCubes(models);
         viewsLookAwayFromTheirCorner();
         messagesParse();
+        markersSample(service);
         spawnTileDraws(service);
         report();
     }
@@ -175,6 +176,49 @@ final class SelfTest {
             } catch (Exception e) {
                 fail("writing the spawn tile: " + e);
             }
+        }
+    }
+
+    /**
+     * The marker seam end to end: a set appears, a throwing set is skipped without taking the
+     * others down, a second registration under one id replaces rather than doubles, and the
+     * built-in spawn set reports exactly one marker in the overworld.
+     */
+    private static void markersSample(DioramaService service) {
+        var good = new com.sablednah.diorama.api.Markers.MarkerSet() {
+            public String id() { return "selftest:good"; }
+            public String label() { return "Good"; }
+            public java.util.Collection<com.sablednah.diorama.api.Markers.Marker> markers(net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> level) {
+                return level == net.minecraft.world.level.Level.OVERWORLD
+                        ? java.util.List.of(new com.sablednah.diorama.api.Markers.Marker("a", "<b>A</b>", 1, 64, 2, 0xFF0000))
+                        : java.util.List.of();
+            }
+        };
+        var bad = new com.sablednah.diorama.api.Markers.MarkerSet() {
+            public String id() { return "selftest:bad"; }
+            public String label() { return "Bad"; }
+            public java.util.Collection<com.sablednah.diorama.api.Markers.Marker> markers(net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> level) {
+                throw new IllegalStateException("deliberate, from the self-test");
+            }
+        };
+        com.sablednah.diorama.api.Markers.register(good);
+        com.sablednah.diorama.api.Markers.register(good);
+        com.sablednah.diorama.api.Markers.register(bad);
+        try {
+            service.server().submit(service::sampleMarkers).join();
+            var layers = service.markers();
+            long goods = layers.stream().filter(l -> l.id().equals("selftest:good")).count();
+            check(goods == 1, "a set registered twice under one id appears " + goods + " times");
+            check(layers.stream().noneMatch(l -> l.id().equals("selftest:bad")), "a throwing set was published");
+            var g = layers.stream().filter(l -> l.id().equals("selftest:good")).findFirst();
+            check(g.isPresent() && g.get().markers().size() == 1 && g.get().markers().get(0).world().equals("minecraft_overworld"),
+                    "the good set's one overworld marker: " + g.map(DioramaService.MarkerLayer::markers).orElse(null));
+            var spawn = layers.stream().filter(l -> l.id().equals("diorama:spawn")).findFirst();
+            check(spawn.isPresent() && spawn.get().markers().size() == 1, "the spawn set: " + spawn.orElse(null));
+        } finally {
+            com.sablednah.diorama.api.Markers.unregister("selftest:good");
+            com.sablednah.diorama.api.Markers.unregister("selftest:bad");
+            service.server().submit(service::sampleMarkers).join();
         }
     }
 

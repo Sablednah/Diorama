@@ -16,7 +16,13 @@
   };
   const ORDER = ['se', 'sw', 'nw', 'ne'].filter(v => (config.views || ['se']).includes(v));
   const savedView = (() => { try { return localStorage.getItem('diorama.view'); } catch { return null; } })();
-  let view = ORDER.includes(savedView) ? savedView : ORDER[0];
+  // A link names its place — #world/view/x/z/zoom — and wins over what this browser remembered.
+  let linked = (() => {
+    const p = decodeURIComponent(location.hash.slice(1)).split('/');
+    return p.length === 5 && p.slice(2).every(n => n !== '' && !isNaN(+n))
+      ? { world: p[0], view: p[1], x: +p[2], z: +p[3], zoom: +p[4] } : null;
+  })();
+  let view = linked && ORDER.includes(linked.view) ? linked.view : ORDER.includes(savedView) ? savedView : ORDER[0];
 
   // World → screen pixels at level 0, exactly as IsoRenderer projects.
   const project = (x, y, z) => {
@@ -45,6 +51,7 @@
   }
   const remembered = (() => { try { return localStorage.getItem('diorama.world'); } catch { return null; } })();
   if (remembered && config.worlds.some(w => w.id === remembered)) select.value = remembered;
+  if (linked && config.worlds.some(w => w.id === linked.world)) select.value = linked.world;
 
   let layer = null;
   const players = L.layerGroup().addTo(map);
@@ -61,15 +68,27 @@
     const v = view;
     layer.getTileUrl = (c) => '/tiles/' + w.id + '/' + v + '/' + (native - c.z) + '/' + c.x + '_' + c.y + '.png';
     layer.addTo(map);
-    if (first) {
+    if (first && linked && linked.world === w.id) {
+      map.setView(toLatLng(linked.x, w.seaLevel, linked.z), Math.max(0, Math.min(native + 2, linked.zoom)));
+    } else if (first) {
       const sx = w.spawnX ?? 0, sy = w.spawnY ?? w.seaLevel, sz = w.spawnZ ?? 0;
       map.setView(toLatLng(sx, sy, sz), native);
     }
+    linked = null;
     try { localStorage.setItem('diorama.world', w.id); } catch { /* private window */ }
     refreshPlayers();
+    refreshMarkers();
   }
 
   select.addEventListener('change', () => show(true));
+
+  // Keep the address naming what is on screen, so it can be copied and sent to someone.
+  function remember() {
+    const c = map.getCenter(), y = world().seaLevel;
+    const [x, z] = unproject(c.lng * scale, -c.lat * scale, y);
+    history.replaceState(null, '', '#' + [select.value, view, Math.round(x), Math.round(z), map.getZoom()].join('/'));
+  }
+  map.on('moveend', remember);
 
   // Turning keeps the spot in the middle of the screen in the middle, so a turn reads as walking
   // round the model rather than jumping somewhere else.
@@ -121,6 +140,41 @@
     }
   }
   setInterval(refreshPlayers, 2000);
+
+  // Markers: one toggleable layer per set another mod (or Diorama) registered. Labels are put in
+  // with textContent, never as HTML — they come from other mods and, through them, from players.
+  const markerLayers = new Map();
+  const toggles = L.control.layers(null, null, { collapsed: true, position: 'topright' });
+  let togglesShown = false;
+  const tip = (m) => {
+    const el = document.createElement('div');
+    const b = document.createElement('strong'); b.textContent = m.label; el.appendChild(b);
+    if (m.detail) { const d = document.createElement('div'); d.textContent = m.detail; el.appendChild(d); }
+    return el;
+  };
+  async function refreshMarkers() {
+    let data;
+    try { data = await (await fetch('/api/markers')).json(); } catch { return; }
+    for (const set of data.layers) {
+      let entry = markerLayers.get(set.id);
+      if (!entry) {
+        entry = { group: L.layerGroup() };
+        markerLayers.set(set.id, entry);
+        toggles.addOverlay(entry.group, set.label);
+        if (set.shown) entry.group.addTo(map);
+      }
+      entry.group.clearLayers();
+      for (const m of set.markers) {
+        if (m.world !== select.value) continue;
+        const icon = L.divIcon({ className: 'marker', html: '<i></i>', iconSize: [12, 12] });
+        const mk = L.marker(toLatLng(m.x, m.y, m.z), { icon, keyboard: false }).bindTooltip(tip(m), { direction: 'top', offset: [0, -6] });
+        mk.on('add', () => { const e = mk.getElement(); if (e) e.style.setProperty('--c', m.colour); });
+        mk.addTo(entry.group);
+      }
+    }
+    if (!togglesShown && markerLayers.size > 0) { toggles.addTo(map); togglesShown = true; }
+  }
+  setInterval(refreshMarkers, 5000);
 
   // Say why the map is empty, rather than letting an empty map look broken.
   const notice = document.getElementById('notice');

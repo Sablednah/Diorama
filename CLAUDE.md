@@ -202,6 +202,31 @@ quick-play waits behind, each needing one click: the first-launch accessibility 
 *I Know What I'm Doing!*. Stop the client when done, by its working directory
 (`/proc/<pid>/cwd` = `…/Diorama/runClient-mc26.2`), never by a pattern in your own command line.
 
+### 9. Markers — `api/Markers`, see `MARKERS-API.md`
+
+**Pull, not push**: every five seconds the tick asks each registered set for its whole truth, so
+there is nothing to take down and nothing to go stale (the JourneyMap pins that multiplied).
+**Replace by id**, for the second world in one JVM. A throwing set is dropped for one refresh and
+logged once. Diorama's own `SpawnMarkers` is the first consumer, so the path is exercised on every
+server. Labels reach the page through `textContent`, never HTML.
+
+### 10. Checking the page itself
+
+The page has been looked at, not only its API: headless Chrome on Vivo, through an SSH reverse
+tunnel to the dev server's web port (WSL's cached Chromium lacks system libraries):
+
+```bash
+ssh -i ~/.ssh/vivo_ed25519 -R 18124:localhost:8124 sable@192.168.7.246 \
+  'google-chrome --headless=new --no-sandbox --user-data-dir=/tmp/dio-chrome --window-size=1280,800 \
+   --virtual-time-budget=12000 --screenshot=/tmp/page.png "http://localhost:18124/#minecraft_overworld/nw/0/0/7"'
+```
+
+`--dump-dom` instead of `--screenshot` gives Leaflet's computed positions, which is how the first
+marker bug was found: the DOM had it dead centre while the screen had it in the corner, because a
+CSS `rotate` on the marker applies *before* Leaflet's `translate3d` and swung the whole position
+45° about the page origin. Rotate an inner element. The screenshot's bottom ~70 px is headless
+Chrome's window frame, not missing tiles. Links are `#world/view/x/z/zoom`, x/z at sea level.
+
 ## Gotchas already paid for
 
 - ⚠ **Gradle's file-system watching does not work on `/mnt/d`** (drvfs sends no inotify). A newly
@@ -218,5 +243,5 @@ quick-play waits behind, each needing one click: the first-launch accessibility 
 - A top-down flat view for very low zooms.
 - Lighting: everything is drawn at noon. Sky light is in `SectionData` already.
 - Quads that extend outside their voxel (rare) are clipped to it.
-- Markers: Standards warps/homes, Factions claims, CityWorld districts — via a seam, as with
-  JourneyMap (`../SableCraft-Standards/MAP-API.md`).
+- Marker **areas** (claims as regions) — points only so far; see `MARKERS-API.md`.
+- Consumers for the markers seam: Standards warps/homes, Factions claims. Their sessions' call.

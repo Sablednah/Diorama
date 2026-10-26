@@ -46,6 +46,8 @@ public final class Lang {
         DEFAULTS.put("status.web", "&7  web: &f{url}");
         DEFAULTS.put("status.web_off", "off");
         DEFAULTS.put("render.not_ready", "&cDiorama is not ready{detail}");
+        DEFAULTS.put("marker.spawn.layer", "Spawn");
+        DEFAULTS.put("marker.spawn", "World spawn");
         DEFAULTS.put("render.started", "{prefix} &7redrawing &f{world}&7. It runs in the background; &f/diorama status&7 says how far it got.");
     }
 

@@ -17,6 +17,8 @@ Open it in a browser. Nobody needs to install anything: it is a web page.
 - **Live player positions**, minus anyone the game is hiding: spectators, the invisible, and anyone
   `/vanish`ed by SableCraft Standards
   if it is installed.
+- **Markers** from other mods, one switchable layer each — see [MARKERS-API.md](MARKERS-API.md).
+- **Links you can send**: the address always names the world, view, place and zoom on screen.
 - Eight zoom levels, and a page that says why it is empty rather than looking broken.
 
 ## Setting up a dedicated server
