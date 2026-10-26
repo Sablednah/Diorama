@@ -40,6 +40,11 @@ neoForge {
         client {
             client()
             gameDirectory = file("runClient-mc${project.minecraft_version}")
+            // ./gradlew runClient -PquickPlay=<save folder> opens that world with no menus, which is
+            // what lets the single-player path be checked on a display nobody is looking at.
+            if (project.hasProperty('quickPlay')) {
+                programArguments.addAll '--quickPlaySingleplayer', project.quickPlay
+            }
         }
 
         server {
