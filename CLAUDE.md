@@ -221,12 +221,22 @@ does — the game stores nothing for the air above terrain. A chunk saved withou
 ### 8¾. Roofed worlds — the nether, cut open
 
 A dimension whose **type** says `hasCeiling` is cut at `minY + logicalHeight − 10` (y 118 in the
-vanilla nether, under the 123–127 bedrock). Every ray starts at the cut and draws **nothing until it
-has crossed air**, so the roof's rock is passed through and the first thing drawn is the floor of
-the first cavern below it — Dynmap's trick, decided per dimension type rather than by name, so a
-roofless nether (CityWorld's `ruined_nether`) is drawn from the sky like any other world.
-`ChunkSnap`'s column tops mean "first floor under the roof" there, which is what region outlines
-and the pick follow. Verified 2026-10-26 on a 4,096-chunk vanilla nether (`world-vanilla` on the
+vanilla nether, under the 123–127 bedrock). In every **column**, everything above the topmost
+cavern under the cut — a run of at least four air blocks — is roof and is not drawn
+(`ChunkSnap.roof`). Decided per dimension type rather than by name, so a roofless nether
+(CityWorld's `ruined_nether`) is drawn from the sky like any other world. Column tops mean "first
+floor under the roof" there, which is what region outlines and the pick follow.
+
+Two versions it took, both visible on the first screenshot:
+
+- **Per ray** ("draw nothing until the ray has crossed air") drew flat-topped prisms of netherrack
+  the height of the cut: a ray that started in a cavern reaching y 118 had already "seen air" and
+  drew the side of the roof hanging over the lower cavern next door.
+- **Any air** counted a two-block bubble in the roof as a cavern, leaving a pillar of rock standing
+  under it beside neighbours cut to the real floor. Hence the four-block run.
+
+What remains — dark cliffs where the topmost cavern jumps between stacked levels — is the nether's
+own layering, not a cut fault. Verified 2026-10-26 on a 4,096-chunk vanilla nether (`world-vanilla` on the
 dev server): the self-test picks 49 points round spawn, all under the cut, none on bedrock.
 
 Cross-section walls of netherrack are expected at the edge of generated land and wherever a

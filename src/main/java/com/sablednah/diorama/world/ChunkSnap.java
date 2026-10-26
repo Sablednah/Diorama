@@ -45,6 +45,11 @@ public final class ChunkSnap {
      * air, so a column's "top" is the floor of the first cavern under the roof.
      */
     private final int ceiling;
+    /**
+     * Per column ({@code z << 4 | x}), the bottom of the roof: the first solid block above the
+     * topmost air under the cut. Everything from here up is lifted off. {@code null} without a roof.
+     */
+    private final int @Nullable [] roofBase;
 
     private ChunkSnap(int minSectionY, @Nullable LevelChunkSection[] sections,
                       @Nullable DataLayer @Nullable [] sky, @Nullable DataLayer @Nullable [] blockLight, int ceiling) {
@@ -53,6 +58,14 @@ public final class ChunkSnap {
         this.sky = sky;
         this.blockLight = blockLight;
         this.ceiling = ceiling;
+        this.roofBase = ceiling == Integer.MAX_VALUE ? null : new int[256];
+        if (roofBase != null) {
+            for (int x = 0; x < 16; x++) {
+                for (int z = 0; z < 16; z++) {
+                    roofBase[z << 4 | x] = findRoofBase(x, z);
+                }
+            }
+        }
         int top = Integer.MIN_VALUE;
         int low = Integer.MAX_VALUE;
         for (int x = 0; x < 16; x++) {
@@ -109,16 +122,48 @@ public final class ChunkSnap {
         return new ChunkSnap(min, sections, sky, block, ceiling);
     }
 
-    /** Down from the cut: through the roof's rock to the first air, then to the first block. */
-    private int floorUnderRoof(int x, int z) {
-        boolean air = false;
+    /**
+     * Whether the block at world {@code x, y, z} (in this chunk) is part of the roof, and so not
+     * drawn. Per column, not per ray: a ray that started in a cavern tall enough to reach the cut
+     * would otherwise draw the side of the roof hanging over the next, lower cavern — flat-topped
+     * walls of netherrack wherever the roof's thickness changes.
+     */
+    public boolean roof(int x, int y, int z) {
+        return roofBase != null && y >= roofBase[(z & 15) << 4 | (x & 15)];
+    }
+
+    /**
+     * A run of air shorter than this is a bubble in the roof, not a cavern: counting it left a
+     * pillar of solid rock standing under it beside neighbours cut down to the real floor.
+     */
+    private static final int CAVERN = 4;
+
+    /**
+     * The first solid block above the topmost cavern under the cut — {@link #CAVERN} air or more in
+     * a row; the cut itself for a column with none.
+     */
+    private int findRoofBase(int x, int z) {
         int bottom = minSectionY << 4;
+        int run = 0;
         for (int y = Math.min(ceiling, (minSectionY + sections.length) << 4) - 1; y >= bottom; y--) {
             LevelChunkSection s = sections[(y >> 4) - minSectionY];
-            boolean empty = s == null || s.getBlockState(x, y & 15, z).isAir();
-            if (empty) {
-                air = true;
-            } else if (air) {
+            if (s == null || s.getBlockState(x, y & 15, z).isAir()) {
+                if (++run == CAVERN) {
+                    return y + CAVERN;
+                }
+            } else {
+                run = 0;
+            }
+        }
+        return ceiling; // solid to the bottom: draw it cut flat rather than leave a hole
+    }
+
+    /** The floor under the roof: the first block below the roof's base, so the pick and outlines agree with the render. */
+    private int floorUnderRoof(int x, int z) {
+        int bottom = minSectionY << 4;
+        for (int y = Math.min(roofBase[z << 4 | x], (minSectionY + sections.length) << 4) - 1; y >= bottom; y--) {
+            LevelChunkSection s = sections[(y >> 4) - minSectionY];
+            if (s != null && !s.getBlockState(x, y & 15, z).isAir()) {
                 return y + 1;
             }
         }

@@ -28,7 +28,6 @@ public final class Pick {
      */
     public static @Nullable Hit at(ChunkStore store, View view, int pixelsPerBlock, double sx, double sy) {
         int yTop = Math.min(store.level().getMaxY() + 1, store.ceiling()), yBottom = store.level().getMinY();
-        boolean seenAir = store.ceiling() == Integer.MAX_VALUE;
         double u = 2.0 * sx / pixelsPerBlock, s = 4.0 * sy / pixelsPerBlock;
         double vxs = (u + s) * 0.5 + yTop, vzs = (s - u) * 0.5 + yTop;
         double ox = view.worldX(vxs, vzs), oy = yTop, oz = view.worldZ(vxs, vzs);
@@ -45,13 +44,10 @@ public final class Pick {
                 double skip = Math.min(IsoRenderer.toEdge(x, vx & ~15, dx, 16),
                         Math.min(y - (vy & ~15), IsoRenderer.toEdge(z, vz & ~15, dz, 16)));
                 t += Math.max(skip, 1e-4);
-                seenAir = true;
                 continue;
             }
             BlockState state = chunk.block(vx, vy, vz);
-            if (state.isAir()) {
-                seenAir = true;
-            } else if (seenAir) {
+            if (!state.isAir() && !chunk.roof(vx, vy, vz)) {
                 return new Hit(vx, vy, vz, state, chunk.biome(vx, vy, vz));
             }
             t += Math.min(IsoRenderer.toEdge(x, vx, dx, 1), Math.min(y - vy, IsoRenderer.toEdge(z, vz, dz, 1))) + 1e-5;
