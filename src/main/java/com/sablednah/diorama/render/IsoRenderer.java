@@ -120,6 +120,8 @@ public final class IsoRenderer {
         // Front-to-back compositing, premultiplied.
         float r = 0, g = 0, b = 0, a = 0;
         boolean inWater = false;
+        // Under a roof the ray starts inside rock: it draws nothing until it has been in air.
+        boolean seenAir = store.ceiling() == Integer.MAX_VALUE;
 
         double t = 0;
         for (int guard = 0; guard < 4096; guard++) {
@@ -138,6 +140,7 @@ public final class IsoRenderer {
                 double skip = Math.min(toEdge(x, vx & ~15, dx, 16), Math.min(y - (vy & ~15), toEdge(z, vz & ~15, dz, 16)));
                 t += Math.max(skip, 1e-4f);
                 inWater = false;
+                seenAir = true;
                 continue;
             }
 
@@ -145,6 +148,12 @@ public final class IsoRenderer {
             if (state.isAir()) {
                 // Most steps. Air holds no fluid and no faces: nothing to look up at all.
                 inWater = false;
+                seenAir = true;
+                t = tExit + 1e-5f;
+                continue;
+            }
+            if (!seenAir) {
+                // Still inside the roof's rock: cut away, as if the roof were lifted off.
                 t = tExit + 1e-5f;
                 continue;
             }

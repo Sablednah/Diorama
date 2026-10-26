@@ -58,6 +58,7 @@ final class SelfTest {
         unscannedStoreStillFinds(service);
         regionsTrace(service);
         pickFindsTheGround(service);
+        roofIsCutAway(service);
         integrationsLinked();
         factionsEndToEnd(service);
         cityWorldAnswers(service);
@@ -336,6 +337,45 @@ final class SelfTest {
         }
         check(tried > 0 && own * 2 >= tried, "the pick named its own column " + own + " of " + tried + " times");
         check(com.sablednah.diorama.render.Pick.at(store, View.SE, ppb, 0, -1e7) == null, "a pixel above the world picked a block");
+    }
+
+    /**
+     * In every roofed world that has ground to look at, picks round its spawn land below the cut
+     * and never on bedrock — the roof is lifted off. Logs which worlds it found, so a run with no
+     * roofed world is visibly a run that proved nothing here.
+     */
+    private static void roofIsCutAway(DioramaService service) {
+        int ppb = DioramaConfig.PIXELS_PER_BLOCK.get();
+        for (var e : service.maps().entrySet()) {
+            var store = e.getValue().store();
+            if (store.ceiling() == Integer.MAX_VALUE) {
+                continue;
+            }
+            store.scan();
+            int tried = 0, under = 0, bedrock = 0;
+            for (int i = -48; i <= 48; i += 16) {
+                for (int j = -48; j <= 48; j += 16) {
+                    double sx = (i - j) * ppb / 2.0, sy = (i + j) * ppb / 4.0 - 64 * ppb / 2.0;
+                    var hit = com.sablednah.diorama.render.Pick.at(store, View.SE, ppb, sx, sy);
+                    if (hit == null) {
+                        continue;
+                    }
+                    tried++;
+                    if (hit.y() < store.ceiling()) {
+                        under++;
+                    }
+                    if (hit.block().is(net.minecraft.world.level.block.Blocks.BEDROCK)) {
+                        bedrock++;
+                    }
+                }
+            }
+            Diorama.LOGGER.info("Diorama self-test: {} is roofed, cut at y {}: {} picks, {} under the cut, {} on bedrock",
+                    e.getKey().identifier(), store.ceiling(), tried, under, bedrock);
+            if (tried > 0) {
+                check(under == tried && bedrock == 0, e.getKey().identifier() + ": the roof was not cut away ("
+                        + under + " of " + tried + " under the cut, " + bedrock + " on bedrock)");
+            }
+        }
     }
 
     /** Each integration whose mod is present must have said it linked, or said why not. */

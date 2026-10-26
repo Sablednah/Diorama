@@ -334,6 +334,11 @@ public final class MapWebServer {
                     lines.add(numbers(line));
                 }
                 j.add("lines", lines);
+                JsonArray fills = new JsonArray();
+                for (double[] ring : pr.fills()) {
+                    fills.add(numbers(ring));
+                }
+                j.add("fills", fills);
                 // The land itself, so the page can say which region the cursor is in.
                 if (r.shape() instanceof com.sablednah.diorama.api.Markers.Chunks c) {
                     JsonArray chunks = new JsonArray(c.chunks().size() * 2);

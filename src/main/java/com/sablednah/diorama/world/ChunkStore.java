@@ -52,12 +52,26 @@ public final class ChunkStore {
     public ChunkStore(ServerLevel level, int capacity, boolean keepLight) {
         this.level = level;
         this.keepLight = keepLight;
+        var type = level.dimensionType();
+        this.ceiling = type.hasCeiling() ? level.getMinY() + type.logicalHeight() - 10 : Integer.MAX_VALUE;
         this.cache = java.util.Collections.synchronizedMap(new LinkedHashMap<>(capacity, 0.75f, true) {
             @Override
             protected boolean removeEldestEntry(Map.Entry<Long, Object> eldest) {
                 return size() > capacity;
             }
         });
+    }
+
+    /**
+     * Where this world is cut open: a little under the logical height of a roofed dimension (the
+     * vanilla nether's bedrock sits at 123–127 with netherrack below it), {@link Integer#MAX_VALUE}
+     * for a world open to the sky. Decided by the dimension type, not the dimension's name, so a
+     * mod's roofed world is cut and a roofless nether (CityWorld's) is drawn from the sky.
+     */
+    private final int ceiling;
+
+    public int ceiling() {
+        return ceiling;
     }
 
     public ServerLevel level() {
@@ -70,7 +84,7 @@ public final class ChunkStore {
 
     /** A freshly saved chunk: replaces whatever we held. Called from a render thread, not the server's. */
     public @Nullable ChunkSnap accept(ChunkPos pos, SerializableChunkData data) {
-        ChunkSnap snap = ChunkSnap.of(data, keepLight);
+        ChunkSnap snap = ChunkSnap.of(data, keepLight, ceiling);
         long key = pos.pack();
         cache.put(key, snap == null ? NONE : snap);
         if (snap != null) {
@@ -99,7 +113,13 @@ public final class ChunkStore {
             }
         }
         ChunkSnap snap = load(new ChunkPos(cx, cz));
-        cache.put(key, snap == null ? NONE : snap);
+        // putIfAbsent, never put: while this read was on disk, a fresher save may have arrived
+        // through accept(). Overwriting it with the older disk copy — often the half-generated
+        // one, which reads as "no chunk" — left tiles drawn empty and deleted, inside the map.
+        Object fresher = cache.putIfAbsent(key, snap == null ? NONE : snap);
+        if (fresher != null) {
+            return fresher == NONE ? null : (ChunkSnap) fresher;
+        }
         return snap;
     }
 
@@ -119,7 +139,7 @@ public final class ChunkStore {
                         ChunkMap.getChunkDataFixContextTag(level.dimension(), level.getChunkSource().getGenerator().getTypeNameForDataFixer()),
                         current);
             }
-            return ChunkSnap.of(SerializableChunkData.parse(level, level.palettedContainerFactory(), tag), keepLight);
+            return ChunkSnap.of(SerializableChunkData.parse(level, level.palettedContainerFactory(), tag), keepLight, ceiling);
         } catch (RuntimeException e) {
             Diorama.LOGGER.debug("Diorama: could not read chunk {} in {}: {}", pos, level.dimension().identifier(), e.toString());
             return null;

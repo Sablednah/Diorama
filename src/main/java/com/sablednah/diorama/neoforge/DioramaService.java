@@ -91,7 +91,7 @@ public final class DioramaService {
     public record Placed(String world, Markers.Marker marker) {}
 
     /** A region with its outline laid on the ground: polylines of flat {@code x, y, z} triples. */
-    public record PlacedRegion(String world, Markers.Region region, List<double[]> lines, double[] anchor) {}
+    public record PlacedRegion(String world, Markers.Region region, List<double[]> lines, List<double[]> fills, double[] anchor) {}
 
     /** What the server thread hands the coordinator: the sets' raw answers, nothing traced yet. */
     record RawLayer(String id, String label, boolean shown, List<Placed> markers, List<RawRegion> regions) {}
@@ -462,7 +462,7 @@ public final class DioramaService {
                         && now - outlineAge.getOrDefault(key, 0L) < 60_000;
                 if (fresh) {
                     // Label, colour or detail may have changed without the land moving.
-                    regions.add(new PlacedRegion(cached.world(), rr.region(), cached.lines(), cached.anchor()));
+                    regions.add(new PlacedRegion(cached.world(), rr.region(), cached.lines(), cached.fills(), cached.anchor()));
                     continue;
                 }
                 PlacedRegion traced = trace(map, rr);
@@ -487,14 +487,16 @@ public final class DioramaService {
                 return null;
             }
             return new PlacedRegion(world, rr.region(), com.sablednah.diorama.render.RegionOutline.trace(c.chunks(), map.store(), sea),
+                    com.sablednah.diorama.render.RegionOutline.fill(c.chunks(), map.store(), sea),
                     com.sablednah.diorama.render.RegionOutline.anchor(c.chunks(), map.store(), sea));
         }
         Markers.Polygon p = (Markers.Polygon) rr.region().shape();
         if (p.corners().size() < 3) {
             return null;
         }
-        return new PlacedRegion(world, rr.region(),
-                List.of(com.sablednah.diorama.render.RegionOutline.tracePolygon(p.corners(), p.y(), map.store(), sea)),
+        double[] ring = com.sablednah.diorama.render.RegionOutline.tracePolygon(p.corners(), p.y(), map.store(), sea);
+        // A polygon's own outline already follows the ground, so it is its fill too.
+        return new PlacedRegion(world, rr.region(), List.of(ring), List.of(ring),
                 com.sablednah.diorama.render.RegionOutline.anchor(p.corners(), p.y(), map.store(), sea));
     }
 

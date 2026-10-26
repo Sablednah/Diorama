@@ -39,13 +39,20 @@ public final class ChunkSnap {
     private final int topY;
     /** The lowest column top: no ray can meet this chunk's first block below it. */
     private final int lowestTop;
+    /**
+     * Where a roofed world (the nether) is cut open, or {@link Integer#MAX_VALUE} for none. Above
+     * it nothing exists; below it, the rock a ray starts inside is passed through until the first
+     * air, so a column's "top" is the floor of the first cavern under the roof.
+     */
+    private final int ceiling;
 
     private ChunkSnap(int minSectionY, @Nullable LevelChunkSection[] sections,
-                      @Nullable DataLayer @Nullable [] sky, @Nullable DataLayer @Nullable [] blockLight) {
+                      @Nullable DataLayer @Nullable [] sky, @Nullable DataLayer @Nullable [] blockLight, int ceiling) {
         this.minSectionY = minSectionY;
         this.sections = sections;
         this.sky = sky;
         this.blockLight = blockLight;
+        this.ceiling = ceiling;
         int top = Integer.MIN_VALUE;
         int low = Integer.MAX_VALUE;
         for (int x = 0; x < 16; x++) {
@@ -57,7 +64,8 @@ public final class ChunkSnap {
                 }
             }
         }
-        this.topY = top;
+        // Under a roof every ray starts at the cut, so a change anywhere below it can show.
+        this.topY = ceiling != Integer.MAX_VALUE && top != Integer.MIN_VALUE ? ceiling : top;
         this.lowestTop = low == Integer.MAX_VALUE ? top : low;
     }
 
@@ -68,6 +76,11 @@ public final class ChunkSnap {
 
     /** As {@link #of(SerializableChunkData)}, keeping the light layers when {@code keepLight}. */
     public static @Nullable ChunkSnap of(SerializableChunkData data, boolean keepLight) {
+        return of(data, keepLight, Integer.MAX_VALUE);
+    }
+
+    /** As above, for a world cut open at {@code ceiling} ({@link Integer#MAX_VALUE}: no roof). */
+    public static @Nullable ChunkSnap of(SerializableChunkData data, boolean keepLight, int ceiling) {
         if (data.chunkStatus() != ChunkStatus.FULL) {
             return null;
         }
@@ -93,7 +106,27 @@ public final class ChunkSnap {
                 block[i] = s.blockLight();
             }
         }
-        return new ChunkSnap(min, sections, sky, block);
+        return new ChunkSnap(min, sections, sky, block, ceiling);
+    }
+
+    /** Down from the cut: through the roof's rock to the first air, then to the first block. */
+    private int floorUnderRoof(int x, int z) {
+        boolean air = false;
+        int bottom = minSectionY << 4;
+        for (int y = Math.min(ceiling, (minSectionY + sections.length) << 4) - 1; y >= bottom; y--) {
+            LevelChunkSection s = sections[(y >> 4) - minSectionY];
+            boolean empty = s == null || s.getBlockState(x, y & 15, z).isAir();
+            if (empty) {
+                air = true;
+            } else if (air) {
+                return y + 1;
+            }
+        }
+        return Integer.MIN_VALUE;
+    }
+
+    public int ceiling() {
+        return ceiling;
     }
 
     public int topY() {
@@ -171,6 +204,9 @@ public final class ChunkSnap {
     }
 
     private int columnTop(int x, int z) {
+        if (ceiling != Integer.MAX_VALUE) {
+            return floorUnderRoof(x, z);
+        }
         for (int i = sections.length - 1; i >= 0; i--) {
             LevelChunkSection s = sections[i];
             if (s == null || s.hasOnlyAir()) {

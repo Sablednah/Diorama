@@ -292,6 +292,14 @@
       for (const r of set.regions || []) {
         if (r.world !== select.value) continue;
         colour = colour || r.colour;
+        // The land itself, faintly tinted, so hovering anywhere inside says whose it is — not only
+        // the two-pixel border. All of a region's quads are one shape: where neighbouring chunks at
+        // different heights overlap on screen, a single fill is not painted twice.
+        if (r.fills && r.fills.length) {
+          const rings = r.fills.map(f => { const pts = []; for (let i = 0; i + 2 < f.length; i += 3) pts.push(toLatLng(f[i], f[i + 1], f[i + 2])); return pts; });
+          L.polygon(rings, { stroke: false, fillColor: r.colour, fillOpacity: 0.18, fillRule: 'nonzero' })
+            .bindTooltip(tip(r), { sticky: true }).addTo(entry.group);
+        }
         // A dark under-stroke keeps a pale border (white = a faction with no banner yet) visible
         // on snow and sand.
         for (const line of r.lines) {

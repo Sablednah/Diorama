@@ -199,7 +199,10 @@ public final class MapRenderer {
         int ceiling = store.level().getMaxY() + 1;
         List<Future<?>> jobs = new ArrayList<>(batch.size());
         for (long key : batch) {
-            int top = surveyed ? layer.tops.getOrDefault(key, ceiling) : ceiling;
+            // A roofed world starts every ray at its cut: rays then pass through the roof's rock
+            // to the caverns, which a start at the tallest floor would miss above itself.
+            int top = store.ceiling() != Integer.MAX_VALUE ? store.ceiling()
+                    : surveyed ? layer.tops.getOrDefault(key, ceiling) : ceiling;
             jobs.add(pool.submit(() -> {
                 int tx = unpackX(key), ty = unpackY(key);
                 try {

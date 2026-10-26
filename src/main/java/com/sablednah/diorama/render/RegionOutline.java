@@ -155,6 +155,29 @@ public final class RegionOutline {
         return height(store.get(bx >> 4, bz >> 4), fallbackY, bx, bz);
     }
 
+    /**
+     * The land as fill: one flat quad per chunk, at the chunk's typical ground height (the median
+     * of five columns, so one tower does not lift the whole chunk). The page draws them all as a
+     * single shape, so where neighbouring quads at different heights overlap on screen the fill is
+     * not doubled into a darker patch.
+     */
+    public static List<double[]> fill(Set<Long> chunks, ChunkStore store, int fallbackY) {
+        List<double[]> out = new ArrayList<>(chunks.size());
+        for (long key : chunks) {
+            int cx = ChunkPos.getX(key), cz = ChunkPos.getZ(key);
+            ChunkSnap snap = store.get(cx, cz);
+            int x0 = cx * 16, z0 = cz * 16;
+            int[] h = {
+                height(snap, fallbackY, x0 + 8, z0 + 8), height(snap, fallbackY, x0 + 2, z0 + 2),
+                height(snap, fallbackY, x0 + 13, z0 + 2), height(snap, fallbackY, x0 + 2, z0 + 13),
+                height(snap, fallbackY, x0 + 13, z0 + 13)};
+            java.util.Arrays.sort(h);
+            double y = h[2];
+            out.add(new double[] {x0, y, z0, x0 + 16, y, z0, x0 + 16, y, z0 + 16, x0, y, z0 + 16});
+        }
+        return out;
+    }
+
     /** A point inside the land to hang its name on: the claimed chunk nearest the middle of them all. */
     public static double[] anchor(Set<Long> chunks, ChunkStore store, int fallbackY) {
         double mx = 0, mz = 0;

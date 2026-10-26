@@ -218,6 +218,20 @@ on**. A section with no stored sky layer reads as open sky when it holds no bloc
 does — the game stores nothing for the air above terrain. A chunk saved without light
 (`isLightOn` false) draws moonlit-dark; nothing to be done about that short of relighting it.
 
+### 8¾. Roofed worlds — the nether, cut open
+
+A dimension whose **type** says `hasCeiling` is cut at `minY + logicalHeight − 10` (y 118 in the
+vanilla nether, under the 123–127 bedrock). Every ray starts at the cut and draws **nothing until it
+has crossed air**, so the roof's rock is passed through and the first thing drawn is the floor of
+the first cavern below it — Dynmap's trick, decided per dimension type rather than by name, so a
+roofless nether (CityWorld's `ruined_nether`) is drawn from the sky like any other world.
+`ChunkSnap`'s column tops mean "first floor under the roof" there, which is what region outlines
+and the pick follow. Verified 2026-10-26 on a 4,096-chunk vanilla nether (`world-vanilla` on the
+dev server): the self-test picks 49 points round spawn, all under the cut, none on bedrock.
+
+Cross-section walls of netherrack are expected at the edge of generated land and wherever a
+cavern's wall faces the camera — the same cut-away sides the overworld diorama has.
+
 ### 9. Markers — `api/Markers`, see `MARKERS-API.md`
 
 **Pull, not push**: every five seconds the tick asks each registered set for its whole truth, so
@@ -251,6 +265,11 @@ Chrome's window frame, not missing tiles. Links are `#world/view/x/z/zoom`, x/z 
   scanned, and a world that has been surveyed once never full-renders again on start, so the
   damage stayed until `/diorama render`. `get()` now scans on first use. The self-test asks a fresh,
   never-scanned store for the spawn chunk.
+- ⚠ **A disk read must not overwrite a fresher save.** `ChunkStore.get` read a chunk from its
+  region file while the save of the same chunk arrived through `accept()`, then `put` the older
+  copy over it — often the half-generated one, which reads as "no chunk". The tile drew empty and
+  was deleted: nine single-tile holes in 16,384 freshly generated chunks. `putIfAbsent` now; the
+  fresher copy wins.
 - ⚠ **Never hop to the server thread from the web thread and wait.** A dedicated server pauses
   its tick after 60 s empty (`pause-when-empty-seconds`), and an empty server is exactly when people
   browse the map: the CityWorld lookup timed out on every request until it called the
@@ -269,5 +288,5 @@ Chrome's window frame, not missing tiles. Links are `#world/view/x/z/zoom`, x/z 
 
 - A top-down flat view for very low zooms.
 - Quads that extend outside their voxel (rare) are clipped to it.
-- Marker **areas** (claims as regions) — points only so far; see `MARKERS-API.md`.
-- Consumers for the markers seam: Standards warps/homes, Factions claims. Their sessions' call.
+- Tile tops are not persisted, so after a restart live redraws start rays at the world ceiling and
+  touch more chunks than the cache holds. Slow on a big world, not wrong.
