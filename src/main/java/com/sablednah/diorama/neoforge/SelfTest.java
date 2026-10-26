@@ -55,6 +55,7 @@ final class SelfTest {
         viewsLookAwayFromTheirCorner();
         messagesParse();
         markersSample(service);
+        unscannedStoreStillFinds(service);
         regionsTrace(service);
         pickFindsTheGround(service);
         integrationsLinked();
@@ -420,6 +421,19 @@ final class SelfTest {
             }
         }
         check(named > 0, "CityWorld named nothing in 81 chunks round spawn of a CityWorld world");
+    }
+
+    /**
+     * A store nobody has scanned yet must still find a chunk that exists. Answering "none" drew
+     * tiles with every neighbour missing after a restart: grey cut-away squares, and holes where
+     * an all-missing redraw deleted a good tile.
+     */
+    private static void unscannedStoreStillFinds(DioramaService service) {
+        var level = service.server().overworld();
+        var spawn = level.getRespawnData().globalPos().pos();
+        var fresh = new com.sablednah.diorama.world.ChunkStore(level, 16, false);
+        check(fresh.get(spawn.getX() >> 4, spawn.getZ() >> 4) != null, "a fresh, unscanned store could not find the spawn chunk");
+        check(fresh.get(30_000_000 >> 4, 30_000_000 >> 4) == null, "a fresh store found a chunk at the world border");
     }
 
     /** The messages file reads back what it wrote, and only real colour codes are converted. */

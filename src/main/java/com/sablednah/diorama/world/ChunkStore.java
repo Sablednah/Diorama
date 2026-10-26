@@ -87,7 +87,16 @@ public final class ChunkStore {
             return held == NONE ? null : (ChunkSnap) held;
         }
         if (!existing.contains(key)) {
-            return null;
+            if (scanned) {
+                return null;
+            }
+            // Never answer "no such chunk" out of ignorance: a tile drawn before the first scan saw
+            // every neighbour as missing, drew cut-away walls of stone, and an all-missing redraw
+            // deleted a good tile outright — the grey squares and holes of a restarted server.
+            ensureScanned();
+            if (!existing.contains(key)) {
+                return null;
+            }
         }
         ChunkSnap snap = load(new ChunkPos(cx, cz));
         cache.put(key, snap == null ? NONE : snap);
@@ -118,10 +127,19 @@ public final class ChunkStore {
     }
 
     /** Fill {@link #existing} from the region headers. Returns how many chunks were found. */
+    private volatile boolean scanned;
+
+    private synchronized void ensureScanned() {
+        if (!scanned) {
+            scan();
+        }
+    }
+
     public int scan() {
         Path worldRoot = level.getServer().getWorldPath(LevelResource.ROOT);
         Path regions = DimensionType.getStorageFolder(level.dimension(), worldRoot).resolve("region");
         if (!Files.isDirectory(regions)) {
+            scanned = true;
             return 0;
         }
         int found = 0;
@@ -138,6 +156,7 @@ public final class ChunkStore {
         } catch (IOException e) {
             Diorama.LOGGER.warn("Diorama: cannot list {} ({})", regions, e.getMessage());
         }
+        scanned = true;
         return found;
     }
 

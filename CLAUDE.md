@@ -245,6 +245,17 @@ Chrome's window frame, not missing tiles. Links are `#world/view/x/z/zoom`, x/z 
 
 ## Gotchas already paid for
 
+- ⚠ **An unscanned `ChunkStore` used to answer "no such chunk".** A chunk saved at boot redrew its
+  tiles before the region files were scanned, so every neighbour looked missing: grey cut-away
+  walls of stone, and an all-empty redraw *deleted* a good tile, leaving a hole. Only a full render
+  scanned, and a world that has been surveyed once never full-renders again on start, so the
+  damage stayed until `/diorama render`. `get()` now scans on first use. The self-test asks a fresh,
+  never-scanned store for the spawn chunk.
+- ⚠ **Never hop to the server thread from the web thread and wait.** A dedicated server pauses
+  its tick after 60 s empty (`pause-when-empty-seconds`), and an empty server is exactly when people
+  browse the map: the CityWorld lookup timed out on every request until it called the
+  (documented thread-safe) API directly.
+
 - ⚠ **Gradle's file-system watching does not work on `/mnt/d`** (drvfs sends no inotify). A newly
   added class compiled as `cannot find symbol` from the class that used it. `gradle.properties`
   sets `org.gradle.vfs.watch=false`; do not remove it.
