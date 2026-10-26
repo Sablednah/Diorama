@@ -53,6 +53,7 @@ public final class Lang {
         DEFAULTS.put("marker.factions.layer", "Factions");
         DEFAULTS.put("marker.factions.chunks", "{n} chunks");
         DEFAULTS.put("marker.factions.peaceful", "peaceful");
+        DEFAULTS.put("marker.cityworld.layer", "CityWorld landmarks");
         DEFAULTS.put("marker.warps.layer", "Warps");
         DEFAULTS.put("marker.warps.spawn", "Spawn (/spawn)");
         DEFAULTS.put("region.none", "{prefix} &7No regions yet. &f/diorama region create <id> [label]&7, then stand at each corner and &f/diorama region corner <id>&7.");

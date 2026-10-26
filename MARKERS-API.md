@@ -4,8 +4,9 @@ Put things on the map — points and areas — from another mod.
 
 **Status: built 2026-10-26; regions added the same day.** Consumers, all inside Diorama:
 its own spawn marker, owner regions (`/diorama region` and datapacks), **Factions territory**
-(reads `FactionsApi`, Factions 1.12.0+) and **Standards warps and `/spawn`** (reads
-`api.places.Places`, Standards 1.12.0+). No outside mod registers a set itself yet.
+(reads `FactionsApi`, Factions 1.12.0+), **Standards warps and `/spawn`** (reads
+`api.places.Places`, Standards 1.12.0+) and **CityWorld landmarks** (its existing `MapMarkers`
+listener; lot names for the info bar come from its existing `CityWorldAPI.lotAt`). No outside mod registers a set itself yet.
 
 ## Using it
 
@@ -92,5 +93,10 @@ Datapacks: `data/<namespace>/diorama/regions/<name>.json`, same format, re-read 
 - **Standards**: warps and `/spawn`, which are public by design. **Not homes** — Standards' API does
   not offer them, and should not.
 
-Both are reached by reflection, once, at start; an older mod leaves its layer off and
+- **CityWorld**: landmarks as they are planned, kept in `<world>/diorama/cityworld-landmarks.json`
+  because CityWorld announces each one only once. Land already generated before Diorama was
+  installed has no landmarks until new ground is planned. `lotAt` is called from the web thread:
+  an empty dedicated server pauses its tick, so hopping to the server thread timed out every time.
+
+All are reached by reflection, once, at start; an older mod leaves its layer off and
 `/diorama status` says which version is needed rather than the layer silently never appearing.

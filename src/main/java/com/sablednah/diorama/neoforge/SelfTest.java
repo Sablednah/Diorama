@@ -59,6 +59,7 @@ final class SelfTest {
         pickFindsTheGround(service);
         integrationsLinked();
         factionsEndToEnd(service);
+        cityWorldAnswers(service);
         spawnTileDraws(service);
         report();
     }
@@ -340,10 +341,10 @@ final class SelfTest {
     private static void integrationsLinked() {
         var status = com.sablednah.diorama.integration.Linked.status();
         Diorama.LOGGER.info("Diorama self-test: integrations: {}", status);
-        for (String mod : List.of("factions", "standards")) {
+        for (String mod : List.of("factions", "standards", "cityworld")) {
             if (net.neoforged.fml.ModList.get().isLoaded(mod)) {
-                String name = mod.equals("factions") ? "Factions" : "Standards";
-                check(status.stream().anyMatch(s -> s.startsWith(name) && s.contains("on the map")),
+                String name = switch (mod) { case "factions" -> "Factions"; case "standards" -> "Standards"; default -> "CityWorld"; };
+                check(status.stream().anyMatch(s -> s.startsWith(name) && (s.contains("on the map") || s.contains("in the info bar"))),
                         name + " is installed but did not link: " + status);
             }
         }
@@ -396,6 +397,29 @@ final class SelfTest {
                         && region.get().lines().size() == 8 && region.get().region().detail() != null
                         && region.get().region().detail().contains("3"),
                 "the seeded faction on the map: " + region.map(r -> r.region() + " with " + r.lines().size() + " edges").orElse("absent"));
+    }
+
+    /**
+     * In a CityWorld world, asking about the ground round spawn must name something, from a
+     * non-server thread as the web server asks. The first version hopped to the server thread and
+     * timed out on every request, because an empty dedicated server pauses its tick.
+     */
+    private static void cityWorldAnswers(DioramaService service) {
+        var cw = com.sablednah.diorama.integration.CityWorldInfo.current();
+        var level = service.server().overworld();
+        if (cw == null || !level.getChunkSource().getGenerator().getClass().getName().contains("CityWorld")) {
+            return;
+        }
+        var spawn = level.getRespawnData().globalPos().pos();
+        int named = 0;
+        for (int i = -64; i <= 64; i += 16) {
+            for (int j = -64; j <= 64; j += 16) {
+                if (cw.describe(level.dimension(), spawn.getX() + i, spawn.getY(), spawn.getZ() + j) != null) {
+                    named++;
+                }
+            }
+        }
+        check(named > 0, "CityWorld named nothing in 81 chunks round spawn of a CityWorld world");
     }
 
     /** The messages file reads back what it wrote, and only real colour codes are converted. */

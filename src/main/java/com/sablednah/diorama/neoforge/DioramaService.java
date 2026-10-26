@@ -129,6 +129,7 @@ public final class DioramaService {
         com.sablednah.diorama.integration.StandardsPlaces.install(server, Lang::text);
         DioramaService service = new DioramaService(server);
         OwnerRegions.INSTANCE.load(server, service.worldRoot);
+        com.sablednah.diorama.integration.CityWorldInfo.install(server, service.worldRoot, Lang::text);
         current = service;
         service.startWeb();
         service.coordinator.execute(service::setUp);
@@ -441,6 +442,10 @@ public final class DioramaService {
     /** Coordinator thread: lay every region's outline on the ground and publish the lot. */
     void publishMarkers(List<RawLayer> raw) {
         long now = System.currentTimeMillis();
+        var cityworld = com.sablednah.diorama.integration.CityWorldInfo.current();
+        if (cityworld != null) {
+            cityworld.saveIfChanged();
+        }
         java.util.Set<String> live = new java.util.HashSet<>();
         List<MarkerLayer> out = new ArrayList<>();
         for (RawLayer layer : raw) {

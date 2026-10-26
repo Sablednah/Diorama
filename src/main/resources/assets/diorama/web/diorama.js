@@ -146,7 +146,7 @@
   // One request in flight at a time; a faster mouse just skips the points in between.
   const info = {
     x: document.getElementById('ix'), y: document.getElementById('iy'), z: document.getElementById('iz'),
-    block: document.getElementById('iblock'), biome: document.getElementById('ibiome'), region: document.getElementById('iregion'),
+    block: document.getElementById('iblock'), place: document.getElementById('iplace'), biome: document.getElementById('ibiome'), region: document.getElementById('iregion'),
   };
   let wanted = null, asking = false;
   map.on('mousemove', (e) => { wanted = [e.latlng.lng * scale, -e.latlng.lat * scale]; ask(); });
@@ -168,6 +168,7 @@
     info.x.textContent = has ? at.x : '—';
     info.y.textContent = has ? at.y : '—';
     info.z.textContent = has ? at.z : '—';
+    info.place.textContent = has && at.place ? at.place : '';
     info.block.textContent = has ? at.blockName : '';
     info.block.title = has ? at.block : '';
     info.biome.textContent = has && at.biomeName ? at.biomeName : '';

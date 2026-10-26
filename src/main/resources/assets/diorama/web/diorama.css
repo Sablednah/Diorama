@@ -22,7 +22,7 @@ img.leaflet-tile { image-rendering: pixelated; }
   padding: 0 8px; font-size: 16px; line-height: 24px; cursor: pointer; }
 #bar button:hover { border-color: var(--accent); }
 #facing { color: var(--muted); white-space: nowrap; min-width: 9em; text-align: center; }
-@media (max-width: 560px) { #facing, #bar strong { display: none; } #info .what:not(#iregion) { display: none; } }
+@media (max-width: 560px) { #facing, #bar strong { display: none; } #info .what:not(#iregion):not(#iplace) { display: none; } }
 /* A marker is a small diamond in its set's colour, so it never reads as a player's circle. The
    inner element turns, not the marker: Leaflet positions the marker with transform, and a rotate
    on the same element applies first and swings the whole position about the page origin. */
@@ -49,7 +49,7 @@ img.leaflet-tile { image-rendering: pixelated; }
 #info .n { display: inline-block; min-width: 7ch; text-align: right; color: var(--text); }
 #info #iy { min-width: 4ch; }
 #info .what { overflow: hidden; text-overflow: ellipsis; }
-#info #iregion { color: var(--text); }
+#info #iregion, #info #iplace { color: var(--text); }
 #info .what:empty { display: none; }
 .gui-hidden .gui { display: none; }
 #show-gui { position: absolute; top: 10px; right: 10px; z-index: 1000; background: var(--panel);

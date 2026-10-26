@@ -233,6 +233,14 @@ public final class MapWebServer {
                     var block = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(hit.block().getBlock());
                     o.addProperty("block", block.toString());
                     o.addProperty("blockName", pretty(block.getPath()));
+                    var cityworld = com.sablednah.diorama.integration.CityWorldInfo.current();
+                    if (cityworld != null) {
+                        // The block above the hit: a lot is asked about where you would stand.
+                        String place = cityworld.describe(e.getKey(), hit.x(), hit.y() + 1, hit.z());
+                        if (place != null) {
+                            o.addProperty("place", place);
+                        }
+                    }
                     if (hit.biome() != null) {
                         hit.biome().unwrapKey().ifPresent(k -> {
                             o.addProperty("biome", k.identifier().toString());
