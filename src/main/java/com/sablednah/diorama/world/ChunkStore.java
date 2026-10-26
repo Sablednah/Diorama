@@ -44,11 +44,14 @@ public final class ChunkStore {
     private static final Object NONE = new Object();
 
     private final ServerLevel level;
+    /** Whether snapshots keep light: only when night tiles are drawn. */
+    private final boolean keepLight;
     private final Set<Long> existing = ConcurrentHashMap.newKeySet();
     private final Map<Long, Object> cache;
 
-    public ChunkStore(ServerLevel level, int capacity) {
+    public ChunkStore(ServerLevel level, int capacity, boolean keepLight) {
         this.level = level;
+        this.keepLight = keepLight;
         this.cache = java.util.Collections.synchronizedMap(new LinkedHashMap<>(capacity, 0.75f, true) {
             @Override
             protected boolean removeEldestEntry(Map.Entry<Long, Object> eldest) {
@@ -67,7 +70,7 @@ public final class ChunkStore {
 
     /** A freshly saved chunk: replaces whatever we held. Called from a render thread, not the server's. */
     public @Nullable ChunkSnap accept(ChunkPos pos, SerializableChunkData data) {
-        ChunkSnap snap = ChunkSnap.of(data);
+        ChunkSnap snap = ChunkSnap.of(data, keepLight);
         long key = pos.pack();
         cache.put(key, snap == null ? NONE : snap);
         if (snap != null) {
@@ -107,7 +110,7 @@ public final class ChunkStore {
                         ChunkMap.getChunkDataFixContextTag(level.dimension(), level.getChunkSource().getGenerator().getTypeNameForDataFixer()),
                         current);
             }
-            return ChunkSnap.of(SerializableChunkData.parse(level, level.palettedContainerFactory(), tag));
+            return ChunkSnap.of(SerializableChunkData.parse(level, level.palettedContainerFactory(), tag), keepLight);
         } catch (RuntimeException e) {
             Diorama.LOGGER.debug("Diorama: could not read chunk {} in {}: {}", pos, level.dimension().identifier(), e.toString());
             return null;

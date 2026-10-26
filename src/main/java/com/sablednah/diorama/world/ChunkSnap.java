@@ -6,6 +6,7 @@ import net.minecraft.core.Holder;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.DataLayer;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.level.chunk.storage.SerializableChunkData;
@@ -27,14 +28,24 @@ public final class ChunkSnap {
 
     private final int minSectionY;
     private final @Nullable LevelChunkSection[] sections;
+    /**
+     * Light, per section, kept only when night tiles are drawn: up to 4 KiB a section, which across
+     * a whole chunk cache is real heap. {@code null} arrays mean "not kept"; a {@code null} entry
+     * means the save stored no layer for that section.
+     */
+    private final @Nullable DataLayer @Nullable [] sky;
+    private final @Nullable DataLayer @Nullable [] blockLight;
     /** One above the highest non-air block, in world Y; {@code Integer.MIN_VALUE} for an empty chunk. */
     private final int topY;
     /** The lowest column top: no ray can meet this chunk's first block below it. */
     private final int lowestTop;
 
-    private ChunkSnap(int minSectionY, @Nullable LevelChunkSection[] sections) {
+    private ChunkSnap(int minSectionY, @Nullable LevelChunkSection[] sections,
+                      @Nullable DataLayer @Nullable [] sky, @Nullable DataLayer @Nullable [] blockLight) {
         this.minSectionY = minSectionY;
         this.sections = sections;
+        this.sky = sky;
+        this.blockLight = blockLight;
         int top = Integer.MIN_VALUE;
         int low = Integer.MAX_VALUE;
         for (int x = 0; x < 16; x++) {
@@ -52,6 +63,11 @@ public final class ChunkSnap {
 
     /** Only full chunks: a half-generated one at the world's edge is not something a player saw. */
     public static @Nullable ChunkSnap of(SerializableChunkData data) {
+        return of(data, false);
+    }
+
+    /** As {@link #of(SerializableChunkData)}, keeping the light layers when {@code keepLight}. */
+    public static @Nullable ChunkSnap of(SerializableChunkData data, boolean keepLight) {
         if (data.chunkStatus() != ChunkStatus.FULL) {
             return null;
         }
@@ -62,12 +78,22 @@ public final class ChunkSnap {
             max = Math.max(max, s.y());
         }
         LevelChunkSection[] sections = new LevelChunkSection[max - min + 1];
+        DataLayer[] sky = keepLight ? new DataLayer[sections.length] : null;
+        DataLayer[] block = keepLight ? new DataLayer[sections.length] : null;
         for (var s : list) {
-            if (s.y() >= min && s.chunkSection() != null) {
-                sections[s.y() - min] = s.chunkSection();
+            if (s.y() < min) {
+                continue;
+            }
+            int i = s.y() - min;
+            if (s.chunkSection() != null) {
+                sections[i] = s.chunkSection();
+            }
+            if (keepLight) {
+                sky[i] = s.skyLight();
+                block[i] = s.blockLight();
             }
         }
-        return new ChunkSnap(min, sections);
+        return new ChunkSnap(min, sections, sky, block);
     }
 
     public int topY() {
@@ -91,6 +117,41 @@ public final class ChunkSnap {
     public BlockState block(int x, int y, int z) {
         LevelChunkSection s = section(y);
         return s == null ? AIR : s.getBlockState(x & 15, y & 15, z & 15);
+    }
+
+    /**
+     * Sky light 0..15 at a block. A section with no stored layer is read as open sky when it holds
+     * no blocks (the air above the terrain, where the game keeps nothing) and as dark when it does
+     * (sealed rock). Above the stored range is open sky. Without kept light, always 15.
+     */
+    public int skyLight(int x, int y, int z) {
+        if (sky == null) {
+            return 15;
+        }
+        int i = (y >> 4) - minSectionY;
+        if (i >= sky.length) {
+            return 15;
+        }
+        if (i < 0) {
+            return 0;
+        }
+        DataLayer l = sky[i];
+        if (l == null) {
+            return section(y) == null ? 15 : 0;
+        }
+        return l.get(x & 15, y & 15, z & 15);
+    }
+
+    /** Block light 0..15 — torches, lamps, lava. */
+    public int blockLight(int x, int y, int z) {
+        if (blockLight == null) {
+            return 0;
+        }
+        int i = (y >> 4) - minSectionY;
+        if (i < 0 || i >= blockLight.length || blockLight[i] == null) {
+            return 0;
+        }
+        return blockLight[i].get(x & 15, y & 15, z & 15);
     }
 
     public @Nullable Holder<Biome> biome(int x, int y, int z) {

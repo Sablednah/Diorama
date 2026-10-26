@@ -165,9 +165,10 @@ public final class DioramaService {
             renderers = ThreadLocal.withInitial(() -> new IsoRenderer(m, ppb));
             int capacity = DioramaConfig.CHUNK_CACHE.get();
             var views = DioramaConfig.views();
+            boolean night = DioramaConfig.NIGHT.get();
             Map<ResourceKey<Level>, MapRenderer> built = new LinkedHashMap<>();
             for (ServerLevel level : server.getAllLevels()) {
-                built.put(level.dimension(), new MapRenderer(new ChunkStore(level, capacity), tileRoot(level.dimension()), views, ppb));
+                built.put(level.dimension(), new MapRenderer(new ChunkStore(level, capacity, night), tileRoot(level.dimension()), views, night, ppb));
             }
             maps = java.util.Collections.unmodifiableMap(built);
             state = State.READY;

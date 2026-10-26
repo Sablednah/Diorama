@@ -22,6 +22,10 @@
     return p.length === 5 && p.slice(2).every(n => n !== '' && !isNaN(+n))
       ? { world: p[0], view: p[1], x: +p[2], z: +p[3], zoom: +p[4] } : null;
   })();
+  // Night rides in the view segment of a link (nw-night), so links keep one shape.
+  const savedNight = (() => { try { return localStorage.getItem('diorama.night') === '1'; } catch { return false; } })();
+  let night = !!config.night && (linked ? linked.view.endsWith('-night') : savedNight);
+  if (linked) linked.view = linked.view.replace(/-night$/, '');
   let view = linked && ORDER.includes(linked.view) ? linked.view : ORDER.includes(savedView) ? savedView : ORDER[0];
 
   // World → screen pixels at level 0, exactly as IsoRenderer projects.
@@ -65,7 +69,7 @@
       tileSize: config.tileSize, minZoom: 0, maxZoom: native + 2, maxNativeZoom: native, noWrap: true,
     });
     // Our levels count outward from the detailed tiles; Leaflet's zoom counts inward.
-    const v = view;
+    const v = view + (night ? '-night' : '');
     layer.getTileUrl = (c) => '/tiles/' + w.id + '/' + v + '/' + (native - c.z) + '/' + c.x + '_' + c.y + '.png';
     layer.addTo(map);
     if (first && linked && linked.world === w.id) {
@@ -86,7 +90,7 @@
   function remember() {
     const c = map.getCenter(), y = world().seaLevel;
     const [x, z] = unproject(c.lng * scale, -c.lat * scale, y);
-    history.replaceState(null, '', '#' + [select.value, view, Math.round(x), Math.round(z), map.getZoom()].join('/'));
+    history.replaceState(null, '', '#' + [select.value, view + (night ? '-night' : ''), Math.round(x), Math.round(z), map.getZoom()].join('/'));
   }
   map.on('moveend', remember);
 
@@ -106,12 +110,30 @@
   function label() {
     facing.textContent = 'looking ' + VIEWS[view].looking;
   }
+  const nightButton = document.getElementById('night');
+  function nightLabel() {
+    nightButton.textContent = night ? '☾' : '☀';
+    nightButton.title = night ? 'Night — switch to day (N)' : 'Day — switch to night (N)';
+    nightButton.setAttribute('aria-pressed', String(night));
+  }
+  function toggleNight() {
+    if (!config.night) return;
+    night = !night;
+    try { localStorage.setItem('diorama.night', night ? '1' : '0'); } catch { /* private window */ }
+    nightLabel();
+    show(false);
+    remember();
+  }
+  nightButton.hidden = !config.night;
+  nightButton.addEventListener('click', toggleNight);
+  nightLabel();
   document.getElementById('turn-left').addEventListener('click', () => turn(-1));
   document.getElementById('turn-right').addEventListener('click', () => turn(1));
   document.addEventListener('keydown', (e) => {
     if (e.target instanceof HTMLSelectElement) return;
     if (e.key === 'q' || e.key === 'Q') turn(-1);
     if (e.key === 'e' || e.key === 'E') turn(1);
+    if (e.key === 'n' || e.key === 'N') toggleNight();
   });
   if (ORDER.length < 2) {
     document.getElementById('turn-left').hidden = true;

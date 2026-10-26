@@ -75,8 +75,9 @@ public final class IsoRenderer {
      * @param yTop the highest block top anywhere this tile could see
      * @return the tile as ARGB, or {@code null} when nothing at all was hit
      */
-    public int @Nullable [] render(ChunkStore store, View view, int tx, int ty, int yTop, int yBottom) {
+    public int @Nullable [] render(ChunkStore store, View view, boolean night, int tx, int ty, int yTop, int yBottom) {
         this.store = store;
+        this.night = night;
         this.dx = view.rayX();
         this.dz = view.rayZ();
         chunks.clear();
@@ -100,6 +101,9 @@ public final class IsoRenderer {
         this.store = null;
         return any ? out : null;
     }
+
+    /** Whether this tile is lit by night. Day tiles are drawn exactly as they always were. */
+    private boolean night;
 
     /** The world step of the current view's rays: Y is always −1, X and Z are ±1. */
     private int dx = -1, dz = -1;
@@ -168,6 +172,19 @@ public final class IsoRenderer {
 
             if (hits > 0) {
                 sortHits();
+                if (night) {
+                    // Light comes from the block the ray crossed just before this one: the air in
+                    // front of a face, which is the value the game lights that face by too.
+                    double back = t - 1e-3;
+                    int bx = enter(ox + dx * back, dx), by = enter(oy - back, -1), bz = enter(oz + dz * back, dz);
+                    ChunkSnap lit = chunk(bx >> 4, bz >> 4);
+                    int sky = lit == null ? 15 : lit.skyLight(bx, by, bz);
+                    int block = lit == null ? 0 : lit.blockLight(bx, by, bz);
+                    nightLight(sky, block);
+                    for (int i = 0; i < hits; i++) {
+                        hitColor[i] = lightUp(hitColor[i]);
+                    }
+                }
                 for (int i = 0; i < hits; i++) {
                     int c = hitColor[i];
                     float ca = (c >>> 24) / 255f;
@@ -274,6 +291,32 @@ public final class IsoRenderer {
         lastSnap = snap;
         lastValid = true;
         return snap;
+    }
+
+    private float lightR, lightG, lightB;
+
+    /**
+     * Night light for a face: the brighter of torchlight (warm) and moonlight (cool and dim), on
+     * the game's own brightness curve {@code f / (4 − 3f)}, so a torch-lit street reads the way it
+     * does in game and open ground falls to a blue near-dark.
+     */
+    private void nightLight(int sky, int block) {
+        float s = curve(sky) * 0.32f, k = curve(block);
+        lightR = Math.min(1f, Math.max(k, s * 0.55f) + 0.03f);
+        lightG = Math.min(1f, Math.max(k * 0.88f, s * 0.62f) + 0.03f);
+        lightB = Math.min(1f, Math.max(k * 0.68f, s * 0.95f) + 0.04f);
+    }
+
+    private static float curve(int level) {
+        float f = level / 15f;
+        return f / (4f - 3f * f);
+    }
+
+    private int lightUp(int c) {
+        int r = (int) (((c >> 16) & 0xFF) * lightR);
+        int g = (int) (((c >> 8) & 0xFF) * lightG);
+        int b = (int) ((c & 0xFF) * lightB);
+        return (c & 0xFF000000) | (r << 16) | (g << 8) | b;
     }
 
     private void addHit(float t, int color) {

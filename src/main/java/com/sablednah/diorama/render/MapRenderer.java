@@ -3,7 +3,6 @@ package com.sablednah.diorama.render;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.EnumMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -40,12 +39,15 @@ import net.minecraft.world.level.ChunkPos;
 public final class MapRenderer {
 
     private final ChunkStore store;
-    private final Map<View, Layer> layers = new EnumMap<>(View.class);
+    /** Keyed by folder name: {@code se}, or {@code se-night}. */
+    private final Map<String, Layer> layers = new java.util.LinkedHashMap<>();
+    private final Set<View> views;
     private final int pixelsPerBlock;
 
-    /** One view's tiles. */
+    /** One view's tiles, by day or by night. */
     private static final class Layer {
         final View view;
+        final boolean night;
         final TileStore tiles;
         /** Level-0 tiles waiting to be drawn. */
         final Set<Long> dirty = ConcurrentHashMap.newKeySet();
@@ -56,8 +58,9 @@ public final class MapRenderer {
          */
         final Map<Long, Integer> tops = new ConcurrentHashMap<>();
 
-        Layer(View view, TileStore tiles) {
+        Layer(View view, boolean night, TileStore tiles) {
             this.view = view;
+            this.night = night;
             this.tiles = tiles;
         }
     }
@@ -72,13 +75,22 @@ public final class MapRenderer {
 
     private final AtomicInteger rendered = new AtomicInteger();
 
-    /** {@code root} holds one folder per view: {@code <root>/se/0/…}. */
-    public MapRenderer(ChunkStore store, Path root, Set<View> views, int pixelsPerBlock) {
+    /** {@code root} holds one folder per view and time: {@code <root>/se/0/…}, {@code <root>/se-night/0/…}. */
+    public MapRenderer(ChunkStore store, Path root, Set<View> views, boolean night, int pixelsPerBlock) {
         this.store = store;
+        this.views = java.util.Collections.unmodifiableSet(new java.util.LinkedHashSet<>(views));
         for (View v : views) {
-            layers.put(v, new Layer(v, new TileStore(root.resolve(v.id()))));
+            layers.put(folder(v, false), new Layer(v, false, new TileStore(root.resolve(folder(v, false)))));
+            if (night) {
+                layers.put(folder(v, true), new Layer(v, true, new TileStore(root.resolve(folder(v, true)))));
+            }
         }
         this.pixelsPerBlock = pixelsPerBlock;
+    }
+
+    /** The folder, and the URL segment, for a view by day or night. */
+    public static String folder(View view, boolean night) {
+        return night ? view.id() + "-night" : view.id();
     }
 
     public ChunkStore store() {
@@ -86,12 +98,12 @@ public final class MapRenderer {
     }
 
     public Set<View> views() {
-        return layers.keySet();
+        return views;
     }
 
-    /** The tiles for {@code view}, or null when that view is not drawn. */
-    public @org.jspecify.annotations.Nullable TileStore tiles(View view) {
-        Layer l = layers.get(view);
+    /** The tiles for {@code view} by day or night, or null when that is not drawn. */
+    public @org.jspecify.annotations.Nullable TileStore tiles(View view, boolean night) {
+        Layer l = layers.get(folder(view, night));
         return l == null ? null : l.tiles;
     }
 
@@ -191,7 +203,7 @@ public final class MapRenderer {
             jobs.add(pool.submit(() -> {
                 int tx = unpackX(key), ty = unpackY(key);
                 try {
-                    tiles.write(0, tx, ty, renderers.get().render(store, layer.view, tx, ty, top, bottom));
+                    tiles.write(0, tx, ty, renderers.get().render(store, layer.view, layer.night, tx, ty, top, bottom));
                     rendered.incrementAndGet();
                 } catch (IOException | RuntimeException ex) {
                     Diorama.LOGGER.warn("Diorama: tile {},{} failed: {}", tx, ty, ex.toString());

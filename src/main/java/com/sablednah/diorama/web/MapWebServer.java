@@ -42,7 +42,7 @@ import net.minecraft.server.level.ServerLevel;
  */
 public final class MapWebServer {
 
-    private static final Pattern TILE = Pattern.compile("/tiles/([a-z0-9_.\\-]+)/([a-z]{2})/(\\d{1,2})/(-?\\d{1,9})_(-?\\d{1,9})\\.png");
+    private static final Pattern TILE = Pattern.compile("/tiles/([a-z0-9_.\\-]+)/([a-z]{2})(-night)?/(\\d{1,2})/(-?\\d{1,9})_(-?\\d{1,9})\\.png");
     private static final Pattern STATIC = Pattern.compile("/web/([a-zA-Z0-9_\\-]+(?:/[a-zA-Z0-9_\\-]+)*\\.(?:js|css|png|html|txt))");
     private static final Map<String, String> TYPES = Map.of(
             "js", "text/javascript; charset=utf-8",
@@ -101,8 +101,8 @@ public final class MapWebServer {
             }
             Matcher tile = TILE.matcher(path);
             if (tile.matches()) {
-                tile(ex, tile.group(1), View.byId(tile.group(2)), Integer.parseInt(tile.group(3)),
-                        Integer.parseInt(tile.group(4)), Integer.parseInt(tile.group(5)));
+                tile(ex, tile.group(1), View.byId(tile.group(2)), tile.group(3) != null, Integer.parseInt(tile.group(4)),
+                        Integer.parseInt(tile.group(5)), Integer.parseInt(tile.group(6)));
                 return;
             }
             Matcher stat = STATIC.matcher(path);
@@ -116,14 +116,14 @@ public final class MapWebServer {
         }
     }
 
-    private void tile(HttpExchange ex, String world, @org.jspecify.annotations.Nullable View view, int level, int x, int y) throws IOException {
+    private void tile(HttpExchange ex, String world, @org.jspecify.annotations.Nullable View view, boolean night, int level, int x, int y) throws IOException {
         if (view == null || level > TileStore.ZOOM_OUT_LEVELS) {
             send(ex, 404, "text/plain", new byte[0]);
             return;
         }
         for (var e : service.maps().entrySet()) {
             if (DioramaService.worldId(e.getKey()).equals(world)) {
-                TileStore tiles = e.getValue().tiles(view);
+                TileStore tiles = e.getValue().tiles(view, night);
                 Path file = tiles == null ? null : tiles.file(level, x, y);
                 if (file != null && Files.isRegularFile(file)) {
                     // Short cache: a tile can be redrawn any time somebody builds.
@@ -167,6 +167,7 @@ public final class MapWebServer {
             views.add(v.id());
         }
         o.add("views", views);
+        o.addProperty("night", DioramaConfig.NIGHT.get());
         JsonArray worlds = new JsonArray();
         for (ServerLevel level : service.server().getAllLevels()) {
             JsonObject w = new JsonObject();

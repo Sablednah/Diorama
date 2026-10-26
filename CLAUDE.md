@@ -202,6 +202,22 @@ quick-play waits behind, each needing one click: the first-launch accessibility 
 *I Know What I'm Doing!*. Stop the client when done, by its working directory
 (`/proc/<pid>/cwd` = `…/Diorama/runClient-mc26.2`), never by a pattern in your own command line.
 
+### 8½. Night — opt-in, `render.night`
+
+Off by default, so the day map the owner signed off on ("that's the iso map I wanted") is
+untouched: day tiles take no light at all. On, every view gets a `<view>-night` tile set and the
+page a ☀/☾ switch (N), and night rides in the link's view segment (`#…/nw-night/…`).
+
+A face is lit by the block the ray crossed **just before** it — the air in front of it, which is
+what the game lights that face by — so there are no normals to carry and slabs and other partial
+shapes come out right. Colour is the brighter of torchlight (warm) and moonlight (cool, ×0.32) on
+the game's own curve `f / (4 − 3f)`.
+
+Light costs heap: `ChunkSnap` keeps the `DataLayer`s (up to 4 KiB a section) **only when night is
+on**. A section with no stored sky layer reads as open sky when it holds no blocks and dark when it
+does — the game stores nothing for the air above terrain. A chunk saved without light
+(`isLightOn` false) draws moonlit-dark; nothing to be done about that short of relighting it.
+
 ### 9. Markers — `api/Markers`, see `MARKERS-API.md`
 
 **Pull, not push**: every five seconds the tick asks each registered set for its whole truth, so
@@ -241,7 +257,6 @@ Chrome's window frame, not missing tiles. Links are `#world/view/x/z/zoom`, x/z 
 ## Known gaps, in rough priority
 
 - A top-down flat view for very low zooms.
-- Lighting: everything is drawn at noon. Sky light is in `SectionData` already.
 - Quads that extend outside their voxel (rare) are clipped to it.
 - Marker **areas** (claims as regions) — points only so far; see `MARKERS-API.md`.
 - Consumers for the markers seam: Standards warps/homes, Factions claims. Their sessions' call.

@@ -29,6 +29,7 @@ public final class DioramaConfig {
     public static final ModConfigSpec.IntValue CHUNK_CACHE;
     public static final ModConfigSpec.ConfigValue<List<? extends String>> VIEWS;
     public static final ModConfigSpec.BooleanValue LIVE_UPDATES;
+    public static final ModConfigSpec.BooleanValue NIGHT;
     public static final ModConfigSpec.IntValue LIVE_CHUNKS_PER_SECOND;
 
     static {
@@ -71,6 +72,11 @@ public final class DioramaConfig {
                 .defineInRange("pixelsPerBlock", 32, 8, 64);
         UPDATE_SECONDS = b.comment("How often changed chunks are re-rendered.")
                 .defineInRange("updateSeconds", 15, 1, 3600);
+        NIGHT = b.comment(
+                        "Also draw every view by night: lit by torches, lamps and lava, under a moon. Doubles the",
+                        "rendering and disk, and keeps light data for every cached chunk (more heap). The page gets a",
+                        "day/night switch. Turning it on draws the night tiles on the next start.")
+                .define("night", false);
         LIVE_UPDATES = b.comment(
                         "Copy a chunk for the map as soon as a block in it changes, instead of waiting for the",
                         "server to save it (up to five minutes). The copy is made on the server thread.")

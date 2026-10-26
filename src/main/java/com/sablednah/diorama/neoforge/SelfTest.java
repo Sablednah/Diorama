@@ -165,10 +165,19 @@ final class SelfTest {
             int sy = (int) Math.floor((vx + vz) * w / 4 - top * w / 2.0);
             int tx = Math.floorDiv(sx, IsoRenderer.TILE);
             int ty = Math.floorDiv(sy, IsoRenderer.TILE);
-            int[] argb = service.renderers().get().render(map.store(), view, tx, ty, overworld.getMaxY() + 1, overworld.getMinY());
+            int[] argb = service.renderers().get().render(map.store(), view, false, tx, ty, overworld.getMaxY() + 1, overworld.getMinY());
             int pixel = argb == null ? 0 : argb[Math.floorMod(sy, IsoRenderer.TILE) * IsoRenderer.TILE + Math.floorMod(sx, IsoRenderer.TILE)];
             check((pixel >>> 24) > 200, "view " + view.id() + ": the pixel over spawn's surface (y " + top + ") is not opaque: "
                     + Integer.toHexString(pixel));
+            if (view == View.SE) {
+                // Night is the same picture, darker: the same pixel stays opaque and loses light.
+                int[] dark = service.renderers().get().render(map.store(), view, true, tx, ty, overworld.getMaxY() + 1, overworld.getMinY());
+                int np = dark == null ? 0 : dark[Math.floorMod(sy, IsoRenderer.TILE) * IsoRenderer.TILE + Math.floorMod(sx, IsoRenderer.TILE)];
+                int dayLum = ((pixel >> 16) & 0xFF) + ((pixel >> 8) & 0xFF) + (pixel & 0xFF);
+                int nightLum = ((np >> 16) & 0xFF) + ((np >> 8) & 0xFF) + (np & 0xFF);
+                check((np >>> 24) > 200 && nightLum < dayLum, "night over spawn: day " + Integer.toHexString(pixel)
+                        + ", night " + Integer.toHexString(np));
+            }
             try {
                 Path dir = service.server().getServerDirectory().resolve("diorama").resolve("selftest").resolve(view.id());
                 new TileStore(dir).write(0, tx, ty, argb);
