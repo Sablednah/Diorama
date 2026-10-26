@@ -1,0 +1,21 @@
+:root {
+  --bg: #1d1f24;
+  --panel: rgba(20, 22, 27, 0.85);
+  --text: #e8e6e3;
+  --muted: #9aa0a6;
+  --accent: #6cc4ff;
+}
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+#map { position: absolute; inset: 0; background: var(--bg); }
+.leaflet-container { background: var(--bg); }
+#bar { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 1000;
+  display: flex; gap: 12px; align-items: center; padding: 6px 12px; border-radius: 8px;
+  background: var(--panel); max-width: calc(100vw - 32px); box-sizing: border-box; }
+#bar select { background: #2a2d33; color: var(--text); border: 1px solid #3a3e45; border-radius: 4px; padding: 2px 6px; }
+#coords { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+#notice { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 1000;
+  padding: 10px 14px; border-radius: 8px; background: var(--panel); max-width: min(640px, calc(100vw - 32px)); }
+.player-label { background: var(--panel); color: var(--text); border: none; box-shadow: none; }
+.player-label::before { display: none; }
+img.leaflet-tile { image-rendering: pixelated; }

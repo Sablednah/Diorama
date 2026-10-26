@@ -1,0 +1,37 @@
+# Diorama - neoforge.mods.toml (values are expanded from gradle.properties at build time).
+# Never edit the generated copy under build/; edit this template and gradle.properties.
+modLoader="javafml"
+loaderVersion="${loader_version_range}"
+license="${mod_license}"
+issueTrackerURL="https://github.com/Sablednah/Diorama/issues"
+
+[[mods]]
+modId="${mod_id}"
+version="${mod_version}"
+displayName="${mod_name}"
+authors="${mod_authors}"
+description='''
+${mod_description}
+'''
+displayURL="https://github.com/Sablednah/Diorama"
+
+[modproperties.${mod_id}]
+buildCommit="${build_commit}"
+buildBranch="${build_branch}"
+buildTime="${build_time}"
+
+# Server-side by design: the map is a web page, so a vanilla client sees everything. In single
+# player the integrated server runs it and serves the page on 127.0.0.1.
+[[dependencies.${mod_id}]]
+    modId="neoforge"
+    type="required"
+    versionRange="[${neo_version_min},)"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.${mod_id}]]
+    modId="minecraft"
+    type="required"
+    versionRange="${minecraft_version_range}"
+    ordering="NONE"
+    side="BOTH"

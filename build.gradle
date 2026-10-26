@@ -1,0 +1,132 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.144'
+    id 'idea'
+}
+
+tasks.named('wrapper', Wrapper).configure {
+    distributionType = Wrapper.DistributionType.BIN
+}
+
+// The jar carries its Minecraft version (diorama-0.1.0+mc26.2.jar) because Diorama will live on
+// several Minecraft lines at once, and two files both called diorama-0.1.0.jar are
+// indistinguishable in a mods folder. The version INSIDE neoforge.mods.toml stays plain.
+if (project.hasProperty('winClient')) {
+    layout.buildDirectory = layout.projectDirectory.dir("build-win-${project.winClient}")
+}
+
+version = "${mod_version}+mc${minecraft_version}"
+group = mod_group_id
+
+base {
+    archivesName = mod_id
+}
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(25)
+
+neoForge {
+    version = project.neo_version
+
+    if (project.parchment_minecraft_version?.trim() && project.parchment_mappings_version?.trim()) {
+        parchment {
+            minecraftVersion = project.parchment_minecraft_version
+            mappingsVersion = project.parchment_mappings_version
+        }
+    }
+
+    runs {
+        // Single player: the integrated server runs Diorama too, and serves the map on
+        // 127.0.0.1 only.
+        client {
+            client()
+            gameDirectory = file("runClient-mc${project.minecraft_version}")
+        }
+
+        server {
+            server()
+            // A world per Minecraft line: a newer server upgrades an older world in place, one way.
+            gameDirectory = file("run-mc${project.minecraft_version}")
+            programArgument '--nogui'
+            programArguments.addAll '--port', project.dev_server_port
+            // ./gradlew runServer -Pselftest - a -D on the gradlew command line lands on Gradle's
+            // JVM, not the forked server, and looks like the test silently not running.
+            if (project.hasProperty('selftest')) {
+                systemProperty 'diorama.selftest', 'true'
+            }
+        }
+
+        configureEach {
+            logLevel = org.slf4j.event.Level.INFO
+        }
+    }
+
+    mods {
+        "${mod_id}" {
+            sourceSet(sourceSets.main)
+        }
+    }
+}
+
+// The build stamp: which commit these bytes came from. Same four fields as the rest of the
+// series, so one reader works everywhere. The commit's time, not the wall clock, so the build
+// stays cacheable and reproducible.
+static String gitOut(File dir, String... args) {
+    try {
+        var proc = new ProcessBuilder(args).directory(dir).redirectErrorStream(true).start()
+        var out = proc.inputStream.text.trim()
+        return proc.waitFor() == 0 && !out.isEmpty() ? out : null
+    } catch (Exception ignored) {
+        return null
+    }
+}
+var buildCommit = gitOut(projectDir, "git", "rev-parse", "--short=8", "HEAD") ?: "unknown"
+var buildBranch = gitOut(projectDir, "git", "rev-parse", "--abbrev-ref", "HEAD") ?: "unknown"
+if (gitOut(projectDir, "git", "status", "--porcelain")) buildCommit += "-dirty"
+var commitEpoch = gitOut(projectDir, "git", "show", "-s", "--format=%ct", "HEAD")
+var buildTime = commitEpoch
+        ? new Date(commitEpoch.toLong() * 1000L)
+                .format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone("UTC"))
+        : "unknown"
+logger.lifecycle("Build stamp: ${buildCommit} on ${buildBranch} at ${buildTime}")
+
+var generateModMetadata = tasks.register("generateModMetadata", ProcessResources) {
+    var replaceProperties = [
+            minecraft_version      : minecraft_version,
+            minecraft_version_range: minecraft_version_range,
+            neo_version            : neo_version,
+            neo_version_min        : (project.findProperty('neo_version_min') ?: neo_version),
+            loader_version_range   : loader_version_range,
+            mod_id                 : mod_id,
+            mod_name               : mod_name,
+            mod_license            : mod_license,
+            mod_version            : mod_version,
+            mod_authors            : mod_authors,
+            mod_description        : mod_description,
+            build_commit           : buildCommit,
+            build_branch           : buildBranch,
+            build_time             : buildTime,
+    ]
+    inputs.properties replaceProperties
+    expand replaceProperties
+    from "src/main/templates"
+    into "build/generated/sources/modMetadata"
+}
+sourceSets.main.resources.srcDir generateModMetadata
+neoForge.ideSyncTask generateModMetadata
+
+tasks.named('jar', Jar) {
+    manifest {
+        attributes([
+                "Implementation-Title"  : mod_name,
+                "Implementation-Version": mod_version,
+                "Build-Commit"          : buildCommit,
+                "Build-Branch"          : buildBranch,
+                "Build-Time"            : buildTime,
+        ])
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.compilerArgs << '-Xlint:deprecation'
+}
