@@ -13,6 +13,7 @@ import com.sablednah.diorama.model.Quad;
 import com.sablednah.diorama.render.IsoRenderer;
 import com.sablednah.diorama.render.MapRenderer;
 import com.sablednah.diorama.render.TileStore;
+import com.sablednah.diorama.render.View;
 import com.sablednah.diorama.world.ChunkSnap;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -50,6 +51,8 @@ final class SelfTest {
         everyStateResolves(models);
         cubeFacesAndCulling(models);
         stairsAreNotCubes(models);
+        viewsLookAwayFromTheirCorner();
+        messagesParse();
         spawnTileDraws(service);
         report();
     }
@@ -149,25 +152,53 @@ final class SelfTest {
             Diorama.LOGGER.info("Diorama self-test: spawn chunk not on disk yet; tile check skipped");
             return;
         }
-        // Project the centre of the top face of spawn's own column and ask for that one pixel. A
-        // fraction-of-the-tile test fails on a new world, which finishes a single chunk at spawn.
+        // Project the centre of the top face of spawn's own column and ask for that one pixel, from
+        // every view. A fraction-of-the-tile test fails on a new world, which finishes a single
+        // chunk at spawn. A view whose rays or projection were turned the wrong way lands on air.
         int top = columnTop(snap, spawn.getX(), spawn.getZ(), overworld.getMinY());
         int w = com.sablednah.diorama.DioramaConfig.PIXELS_PER_BLOCK.get();
-        float cx = spawn.getX() + 0.5f, cz = spawn.getZ() + 0.5f;
-        int sx = (int) Math.floor((cx - cz) * w / 2f);
-        int sy = (int) Math.floor((cx + cz) * w / 4f - top * w / 2f);
-        int tx = Math.floorDiv(sx, IsoRenderer.TILE);
-        int ty = Math.floorDiv(sy, IsoRenderer.TILE);
-        int[] argb = service.renderers().get().render(map.store(), tx, ty, overworld.getMaxY() + 1, overworld.getMinY());
-        int pixel = argb == null ? 0 : argb[Math.floorMod(sy, IsoRenderer.TILE) * IsoRenderer.TILE + Math.floorMod(sx, IsoRenderer.TILE)];
-        check((pixel >>> 24) > 200, "the pixel over spawn's surface (y " + top + ") is not opaque: "
-                + Integer.toHexString(pixel));
-        try {
-            Path dir = service.server().getServerDirectory().resolve("diorama").resolve("selftest");
-            new TileStore(dir).write(0, tx, ty, argb);
-            Diorama.LOGGER.info("Diorama self-test: spawn tile written to {}", new TileStore(dir).file(0, tx, ty));
-        } catch (Exception e) {
-            fail("writing the spawn tile: " + e);
+        double cx = spawn.getX() + 0.5, cz = spawn.getZ() + 0.5;
+        for (View view : View.values()) {
+            double vx = view.viewX(cx, cz), vz = view.viewZ(cx, cz);
+            int sx = (int) Math.floor((vx - vz) * w / 2);
+            int sy = (int) Math.floor((vx + vz) * w / 4 - top * w / 2.0);
+            int tx = Math.floorDiv(sx, IsoRenderer.TILE);
+            int ty = Math.floorDiv(sy, IsoRenderer.TILE);
+            int[] argb = service.renderers().get().render(map.store(), view, tx, ty, overworld.getMaxY() + 1, overworld.getMinY());
+            int pixel = argb == null ? 0 : argb[Math.floorMod(sy, IsoRenderer.TILE) * IsoRenderer.TILE + Math.floorMod(sx, IsoRenderer.TILE)];
+            check((pixel >>> 24) > 200, "view " + view.id() + ": the pixel over spawn's surface (y " + top + ") is not opaque: "
+                    + Integer.toHexString(pixel));
+            try {
+                Path dir = service.server().getServerDirectory().resolve("diorama").resolve("selftest").resolve(view.id());
+                new TileStore(dir).write(0, tx, ty, argb);
+                Diorama.LOGGER.info("Diorama self-test: spawn tile written to {}", new TileStore(dir).file(0, tx, ty));
+            } catch (Exception e) {
+                fail("writing the spawn tile: " + e);
+            }
+        }
+    }
+
+    /** The messages file reads back what it wrote, and only real colour codes are converted. */
+    private static void messagesParse() {
+        var m = Lang.parse(java.util.List.of(
+                "# comment", "a: \"say \\\"hi\\\" & go\"", "b: 'it''s'", "c: bare value", "not a pair"));
+        check("say \"hi\" & go".equals(m.get("a")), "double-quoted value read as " + m.get("a"));
+        check("it's".equals(m.get("b")), "single-quoted value read as " + m.get("b"));
+        check("bare value".equals(m.get("c")) && m.size() == 3, "bare value / junk line: " + m);
+        check(Lang.colour("&cTom & Jerry").equals("\u00A7cTom & Jerry"), "colour codes: " + Lang.colour("&cTom & Jerry"));
+    }
+
+    /** Each camera corner looks away from itself, and a view's rotation undoes cleanly. */
+    private static void viewsLookAwayFromTheirCorner() {
+        int[][] expect = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}}; // se, sw, nw, ne: (x, z) step of a ray
+        View[] order = {View.SE, View.SW, View.NW, View.NE};
+        for (int i = 0; i < order.length; i++) {
+            View v = order[i];
+            check(v.rayX() == expect[i][0] && v.rayZ() == expect[i][1],
+                    "view " + v.id() + " rays step (" + v.rayX() + ", " + v.rayZ() + ")");
+            double x = 37.25, z = -11.5;
+            double vx = v.viewX(x, z), vz = v.viewZ(x, z);
+            check(v.worldX(vx, vz) == x && v.worldZ(vx, vz) == z, "view " + v.id() + " does not round-trip");
         }
     }
 

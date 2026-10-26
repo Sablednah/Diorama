@@ -1,5 +1,8 @@
 package com.sablednah.diorama;
 
+import java.util.List;
+
+import com.sablednah.diorama.render.View;
 import net.neoforged.neoforge.common.ModConfigSpec;
 
 /**
@@ -24,6 +27,7 @@ public final class DioramaConfig {
     public static final ModConfigSpec.IntValue PIXELS_PER_BLOCK;
     public static final ModConfigSpec.IntValue UPDATE_SECONDS;
     public static final ModConfigSpec.IntValue CHUNK_CACHE;
+    public static final ModConfigSpec.ConfigValue<List<? extends String>> VIEWS;
 
     static {
         ModConfigSpec.Builder b = new ModConfigSpec.Builder();
@@ -67,9 +71,29 @@ public final class DioramaConfig {
                 .defineInRange("updateSeconds", 15, 1, 3600);
         CHUNK_CACHE = b.comment("Chunks held in memory while rendering. More is faster for a full render and costs heap.")
                 .defineInRange("chunkCache", 4096, 256, 65536);
+        VIEWS = b.comment(
+                        "Which corners the camera can stand at: se, sw, nw, ne. Each one is a full set of tiles,",
+                        "so each costs as much rendering and disk as the first. Turning one on draws it on the next start.")
+                .defineList("views", List.of("se", "sw", "nw", "ne"), () -> "se",
+                        o -> o instanceof String s && View.byId(s) != null);
         b.pop();
 
         SPEC = b.build();
+    }
+
+    /** The configured views, in config order, duplicates dropped; never empty. */
+    public static java.util.Set<View> views() {
+        java.util.Set<View> out = new java.util.LinkedHashSet<>();
+        for (String id : VIEWS.get()) {
+            View v = View.byId(id);
+            if (v != null) {
+                out.add(v);
+            }
+        }
+        if (out.isEmpty()) {
+            out.add(View.SE);
+        }
+        return out;
     }
 
     private DioramaConfig() {}

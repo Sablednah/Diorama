@@ -1,7 +1,9 @@
 package com.sablednah.diorama.render;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -30,21 +32,35 @@ import net.minecraft.world.level.ChunkPos;
  *
  * <p>The same bookkeeping answers where a ray must start: a tile's {@code yTop} is the highest top
  * of any chunk that marked it, since any block the tile can show belongs to such a chunk.</p>
+ *
+ * <p>Each {@link View} is its own set of tiles with its own dirty list and heights; a changed chunk
+ * marks all of them. The chunk's box is computed in the view's rotated coordinates, so the same
+ * arithmetic serves every view.</p>
  */
 public final class MapRenderer {
 
     private final ChunkStore store;
-    private final TileStore tiles;
+    private final Map<View, Layer> layers = new EnumMap<>(View.class);
     private final int pixelsPerBlock;
 
-    /** Level-0 tiles waiting to be drawn. */
-    private final Set<Long> dirty = ConcurrentHashMap.newKeySet();
-    /**
-     * The highest block top each tile has ever been told about. It only rises: a tile is marked by
-     * one changed chunk at a time, and starting its rays at that one chunk's height would cut the
-     * top off a taller neighbour that shares the tile.
-     */
-    private final Map<Long, Integer> tops = new ConcurrentHashMap<>();
+    /** One view's tiles. */
+    private static final class Layer {
+        final View view;
+        final TileStore tiles;
+        /** Level-0 tiles waiting to be drawn. */
+        final Set<Long> dirty = ConcurrentHashMap.newKeySet();
+        /**
+         * The highest block top each tile has ever been told about. It only rises: a tile is
+         * marked by one changed chunk at a time, and starting its rays at that one chunk's height
+         * would cut the top off a taller neighbour that shares the tile.
+         */
+        final Map<Long, Integer> tops = new ConcurrentHashMap<>();
+
+        Layer(View view, TileStore tiles) {
+            this.view = view;
+            this.tiles = tiles;
+        }
+    }
     /**
      * Whether {@link #tops} has heard from every chunk — true after a full render. Until then a
      * tile's rays start at the build limit, which costs a few skipped empty sections per ray and
@@ -56,9 +72,12 @@ public final class MapRenderer {
 
     private final AtomicInteger rendered = new AtomicInteger();
 
-    public MapRenderer(ChunkStore store, TileStore tiles, int pixelsPerBlock) {
+    /** {@code root} holds one folder per view: {@code <root>/se/0/…}. */
+    public MapRenderer(ChunkStore store, Path root, Set<View> views, int pixelsPerBlock) {
         this.store = store;
-        this.tiles = tiles;
+        for (View v : views) {
+            layers.put(v, new Layer(v, new TileStore(root.resolve(v.id()))));
+        }
         this.pixelsPerBlock = pixelsPerBlock;
     }
 
@@ -66,12 +85,32 @@ public final class MapRenderer {
         return store;
     }
 
-    public TileStore tiles() {
-        return tiles;
+    public Set<View> views() {
+        return layers.keySet();
+    }
+
+    /** The tiles for {@code view}, or null when that view is not drawn. */
+    public @org.jspecify.annotations.Nullable TileStore tiles(View view) {
+        Layer l = layers.get(view);
+        return l == null ? null : l.tiles;
+    }
+
+    /** Whether any drawn view has never written a tile — a new world, or a view just switched on. */
+    public boolean missingTiles() {
+        for (Layer l : layers.values()) {
+            if (!java.nio.file.Files.isDirectory(l.tiles.root())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public int pendingTiles() {
-        return dirty.size();
+        int n = 0;
+        for (Layer l : layers.values()) {
+            n += l.dirty.size();
+        }
+        return n;
     }
 
     public void markSurveyed() {
@@ -96,18 +135,25 @@ public final class MapRenderer {
             return;
         }
         float w = pixelsPerBlock;
-        int d = (cx - cz) * 16;
-        int s = (cx + cz) * 16;
-        int sxMin = (int) Math.floor((d - 16) * w / 2f);
-        int sxMax = (int) Math.ceil((d + 16) * w / 2f);
-        int syMin = (int) Math.floor(s * w / 4f - high * w / 2f);
-        int syMax = (int) Math.ceil((s + 32) * w / 4f - low * w / 2f);
-        int t = IsoRenderer.TILE;
-        for (int ty = Math.floorDiv(syMin, t); ty <= Math.floorDiv(syMax, t); ty++) {
-            for (int tx = Math.floorDiv(sxMin, t); tx <= Math.floorDiv(sxMax, t); tx++) {
-                long tile = pack(tx, ty);
-                tops.merge(tile, high, Math::max);
-                dirty.add(tile);
+        int x0 = cx * 16, z0 = cz * 16;
+        for (Layer l : layers.values()) {
+            // The chunk's footprint in view space. A quarter-turn keeps it an axis-aligned square,
+            // so two opposite corners give its bounds.
+            double ax = l.view.viewX(x0, z0), bx = l.view.viewX(x0 + 16, z0 + 16);
+            double az = l.view.viewZ(x0, z0), bz = l.view.viewZ(x0 + 16, z0 + 16);
+            double xMin = Math.min(ax, bx), xMax = Math.max(ax, bx);
+            double zMin = Math.min(az, bz), zMax = Math.max(az, bz);
+            int sxMin = (int) Math.floor((xMin - zMax) * w / 2f);
+            int sxMax = (int) Math.ceil((xMax - zMin) * w / 2f);
+            int syMin = (int) Math.floor((xMin + zMin) * w / 4f - high * w / 2f);
+            int syMax = (int) Math.ceil((xMax + zMax) * w / 4f - low * w / 2f);
+            int t = IsoRenderer.TILE;
+            for (int ty = Math.floorDiv(syMin, t); ty <= Math.floorDiv(syMax, t); ty++) {
+                for (int tx = Math.floorDiv(sxMin, t); tx <= Math.floorDiv(sxMax, t); tx++) {
+                    long tile = pack(tx, ty);
+                    l.tops.merge(tile, high, Math::max);
+                    l.dirty.add(tile);
+                }
             }
         }
     }
@@ -117,6 +163,14 @@ public final class MapRenderer {
      * calling thread, which must not be the server's.
      */
     public void renderDirty(ExecutorService pool, ThreadLocal<IsoRenderer> renderers) {
+        for (Layer l : layers.values()) {
+            renderDirty(l, pool, renderers);
+        }
+    }
+
+    private void renderDirty(Layer layer, ExecutorService pool, ThreadLocal<IsoRenderer> renderers) {
+        Set<Long> dirty = layer.dirty;
+        TileStore tiles = layer.tiles;
         if (dirty.isEmpty()) {
             return;
         }
@@ -133,11 +187,11 @@ public final class MapRenderer {
         int ceiling = store.level().getMaxY() + 1;
         List<Future<?>> jobs = new ArrayList<>(batch.size());
         for (long key : batch) {
-            int top = surveyed ? tops.getOrDefault(key, ceiling) : ceiling;
+            int top = surveyed ? layer.tops.getOrDefault(key, ceiling) : ceiling;
             jobs.add(pool.submit(() -> {
                 int tx = unpackX(key), ty = unpackY(key);
                 try {
-                    tiles.write(0, tx, ty, renderers.get().render(store, tx, ty, top, bottom));
+                    tiles.write(0, tx, ty, renderers.get().render(store, layer.view, tx, ty, top, bottom));
                     rendered.incrementAndGet();
                 } catch (IOException | RuntimeException ex) {
                     Diorama.LOGGER.warn("Diorama: tile {},{} failed: {}", tx, ty, ex.toString());

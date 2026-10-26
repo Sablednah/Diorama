@@ -148,10 +148,10 @@ public final class DioramaService {
             int ppb = DioramaConfig.PIXELS_PER_BLOCK.get();
             renderers = ThreadLocal.withInitial(() -> new IsoRenderer(m, ppb));
             int capacity = DioramaConfig.CHUNK_CACHE.get();
+            var views = DioramaConfig.views();
             Map<ResourceKey<Level>, MapRenderer> built = new LinkedHashMap<>();
             for (ServerLevel level : server.getAllLevels()) {
-                TileStore tiles = new TileStore(tileRoot(level.dimension()));
-                built.put(level.dimension(), new MapRenderer(new ChunkStore(level, capacity), tiles, ppb));
+                built.put(level.dimension(), new MapRenderer(new ChunkStore(level, capacity), tileRoot(level.dimension()), views, ppb));
             }
             maps = java.util.Collections.unmodifiableMap(built);
             state = State.READY;
@@ -161,9 +161,10 @@ public final class DioramaService {
             if (Boolean.getBoolean("diorama.selftest")) {
                 SelfTest.run(this);
             }
-            // A world with no tiles at all gets drawn once, unasked. After that only changes are.
+            // A world with no tiles at all gets drawn once, unasked — as does a view just switched
+            // on. After that only changes are.
             for (var e : maps.entrySet()) {
-                if (!Files.isDirectory(e.getValue().tiles().root())) {
+                if (e.getValue().missingTiles()) {
                     renderAll(e.getKey());
                 }
             }
@@ -329,7 +330,7 @@ public final class DioramaService {
     void samplePlayers() {
         List<PlayerDot> dots = new ArrayList<>();
         for (ServerPlayer p : server.getPlayerList().getPlayers()) {
-            if (p.isSpectator()) {
+            if (Hidden.hidden(p)) {
                 continue;
             }
             dots.add(new PlayerDot(p.getGameProfile().name(), worldId(p.level().dimension()), p.getX(), p.getY(), p.getZ()));
@@ -371,8 +372,9 @@ public final class DioramaService {
         return players;
     }
 
+    /** The folder holding one folder per view for {@code level}. */
     public Path tileRoot(ResourceKey<Level> level) {
-        return worldRoot.resolve("diorama").resolve("tiles").resolve(worldId(level)).resolve("se");
+        return worldRoot.resolve("diorama").resolve("tiles").resolve(worldId(level));
     }
 
     /** {@code minecraft:overworld} → {@code minecraft_overworld}: safe in a URL and a path. */

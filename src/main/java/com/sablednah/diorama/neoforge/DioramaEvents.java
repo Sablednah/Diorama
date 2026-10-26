@@ -15,6 +15,7 @@ public final class DioramaEvents {
 
     @SubscribeEvent
     public static void serverStarted(ServerStartedEvent event) {
+        Lang.load();
         DioramaService.start(event.getServer());
     }
 

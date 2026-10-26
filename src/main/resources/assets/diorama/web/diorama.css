@@ -19,3 +19,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 .player-label { background: var(--panel); color: var(--text); border: none; box-shadow: none; }
 .player-label::before { display: none; }
 img.leaflet-tile { image-rendering: pixelated; }
+#bar button { background: #2a2d33; color: var(--text); border: 1px solid #3a3e45; border-radius: 4px;
+  padding: 0 8px; font-size: 16px; line-height: 24px; cursor: pointer; }
+#bar button:hover { border-color: var(--accent); }
+#facing { color: var(--muted); white-space: nowrap; min-width: 9em; text-align: center; }
+@media (max-width: 560px) { #coords, #facing { display: none; } }

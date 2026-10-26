@@ -20,6 +20,7 @@ import com.sablednah.diorama.DioramaConfig;
 import com.sablednah.diorama.neoforge.DioramaService;
 import com.sablednah.diorama.render.IsoRenderer;
 import com.sablednah.diorama.render.TileStore;
+import com.sablednah.diorama.render.View;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import net.minecraft.server.level.ServerLevel;
@@ -33,14 +34,14 @@ import net.minecraft.server.level.ServerLevel;
  *
  * <ul>
  * <li>{@code /} and {@code /web/...} — the page, from the mod jar.</li>
- * <li>{@code /tiles/<world>/se/<level>/<x>_<y>.png} — from the save folder.</li>
+ * <li>{@code /tiles/<world>/<view>/<level>/<x>_<y>.png} — from the save folder.</li>
  * <li>{@code /api/config} — worlds, tile geometry, and whether the map can draw at all.</li>
  * <li>{@code /api/players} — where everyone is, once a second.</li>
  * </ul>
  */
 public final class MapWebServer {
 
-    private static final Pattern TILE = Pattern.compile("/tiles/([a-z0-9_.\\-]+)/se/(\\d{1,2})/(-?\\d{1,9})_(-?\\d{1,9})\\.png");
+    private static final Pattern TILE = Pattern.compile("/tiles/([a-z0-9_.\\-]+)/([a-z]{2})/(\\d{1,2})/(-?\\d{1,9})_(-?\\d{1,9})\\.png");
     private static final Pattern STATIC = Pattern.compile("/web/([a-zA-Z0-9_\\-]+(?:/[a-zA-Z0-9_\\-]+)*\\.(?:js|css|png|html|txt))");
     private static final Map<String, String> TYPES = Map.of(
             "js", "text/javascript; charset=utf-8",
@@ -95,7 +96,8 @@ public final class MapWebServer {
             }
             Matcher tile = TILE.matcher(path);
             if (tile.matches()) {
-                tile(ex, tile.group(1), Integer.parseInt(tile.group(2)), Integer.parseInt(tile.group(3)), Integer.parseInt(tile.group(4)));
+                tile(ex, tile.group(1), View.byId(tile.group(2)), Integer.parseInt(tile.group(3)),
+                        Integer.parseInt(tile.group(4)), Integer.parseInt(tile.group(5)));
                 return;
             }
             Matcher stat = STATIC.matcher(path);
@@ -109,15 +111,16 @@ public final class MapWebServer {
         }
     }
 
-    private void tile(HttpExchange ex, String world, int level, int x, int y) throws IOException {
-        if (level > TileStore.ZOOM_OUT_LEVELS) {
+    private void tile(HttpExchange ex, String world, @org.jspecify.annotations.Nullable View view, int level, int x, int y) throws IOException {
+        if (view == null || level > TileStore.ZOOM_OUT_LEVELS) {
             send(ex, 404, "text/plain", new byte[0]);
             return;
         }
         for (var e : service.maps().entrySet()) {
             if (DioramaService.worldId(e.getKey()).equals(world)) {
-                Path file = e.getValue().tiles().file(level, x, y);
-                if (Files.isRegularFile(file)) {
+                TileStore tiles = e.getValue().tiles(view);
+                Path file = tiles == null ? null : tiles.file(level, x, y);
+                if (file != null && Files.isRegularFile(file)) {
                     // Short cache: a tile can be redrawn any time somebody builds.
                     ex.getResponseHeaders().set("Cache-Control", "max-age=10");
                     send(ex, 200, "image/png", Files.readAllBytes(file));
@@ -154,6 +157,11 @@ public final class MapWebServer {
         o.addProperty("tileSize", IsoRenderer.TILE);
         o.addProperty("pixelsPerBlock", DioramaConfig.PIXELS_PER_BLOCK.get());
         o.addProperty("zoomOutLevels", TileStore.ZOOM_OUT_LEVELS);
+        JsonArray views = new JsonArray();
+        for (View v : DioramaConfig.views()) {
+            views.add(v.id());
+        }
+        o.add("views", views);
         JsonArray worlds = new JsonArray();
         for (ServerLevel level : service.server().getAllLevels()) {
             JsonObject w = new JsonObject();

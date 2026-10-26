@@ -63,11 +63,11 @@ export PATH="$JAVA_HOME/bin:$PATH"
 asset/   AssetSource, Assets       jars & packs → bytes; textures (first animation frame)
 model/   BlockModels, Quad         BlockState → baked faces, a port of the client's FaceBakery
 world/   ChunkSnap, ChunkStore     immutable chunk copies; region-header scan; IOWorker reads
-render/  IsoRenderer               one ray per pixel along (−1,−1,−1)
+render/  IsoRenderer, View         one ray per pixel; four camera corners
          MapRenderer, TileStore    dirty tiles, worker pool, PNGs, zoom-out pyramid
          BlockTints                the client's BlockColors table, server-side
 web/     MapWebServer              JDK HttpServer: page, tiles, /api/config, /api/players
-neoforge/                          lifecycle, events, /diorama, SelfTest — the only glue
+neoforge/                          lifecycle, events, /diorama, Lang, Hidden, SelfTest — the only glue
 ```
 
 ### 1. Every block is drawn from the game's own JSON
@@ -113,9 +113,22 @@ Water draws once at its surface as a **flat sheet of the biome's water colour** 
 stays transparent while the ray is in it. Not the water texture: repeated per block at map scale it
 read as a blue-and-white grid (seen on the first CityWorld render, 2026-10-25).
 
-The camera is fixed south-east for now (`se` in every tile path). Other directions are a planned
-addition — CityWorld towers hide streets behind them — and the path segment exists so adding them
-does not move the existing tiles.
+**Four camera corners** (`View`: `se`, `sw`, `nw`, `ne`, Dynmap's naming — the corner the camera
+stands at). Each is a proper quarter-turn into "view space", where the camera is always at
+`+x', +z'`, so the projection above never changes: only the ray's world step `(dx, −1, dz)` and the
+start point do. Never a mirror — that would put the light on the wrong side and draw every staircase
+backwards. Each view is a full tile set, so each costs what the first did; `render.views` picks
+them, and a view switched on renders on the next start. The page turns with ⟲/⟳ or Q/E and keeps the
+spot in the middle of the screen in the middle.
+
+Ray positions are **doubles**. In floats, a few thousand blocks out the nudge past each voxel
+boundary is smaller than one ulp, so a ray stops advancing and spins out its step budget drawing
+nothing — invisible near spawn, which is where every test looks.
+
+**Profiled 2026-10-26** (JFR, full overworld render): the top costs were `FluidState.isEmpty` on
+air, boxing a `Long` key to find the chunk on every step, and a fluid **tag** lookup. Air now
+`continue`s before anything else, the last chunk is cached, and water is a type compare. The ray
+walk itself (`Quad.intersect`) was fourth. A full render went 80 s → 16 s.
 
 ### 4. Nothing runs on the server thread
 
@@ -134,7 +147,7 @@ does not move the existing tiles.
 
 ### 5. Tiles
 
-`<world>/diorama/tiles/<namespace_path>/se/<level>/<tx>_<ty>.png`, inside the **save**, so each
+`<world>/diorama/tiles/<namespace_path>/<view>/<level>/<tx>_<ty>.png`, inside the **save**, so each
 single-player world has its own map. Level 0 is ray cast; levels 1–8 are 2×2 downsamples. A chunk
 marks dirty every tile its screen-space box touches (columns × the span from its lowest column top
 to its highest). A tile's ray start height only ever rises (`MapRenderer.tops`), and until a full
@@ -157,15 +170,34 @@ The page **says why it is empty** — no textures, still loading, or the full-re
 rather than showing a blank map that looks broken (the series rule: *whenever correct behaviour
 is to show nothing, say so*).
 
+### 7. Who the map hides, and its words
+
+`Hidden`: spectators, anyone invisible, and anyone `/vanish`ed by SableCraft Standards — a web map
+is the easiest way there is to find somebody. Standards is looked up **by reflection, once**,
+because Diorama must start without it; only `Vanish.isVanished` is needed, not `VanishEvent`, since
+players are re-sampled every second. A Standards whose API moved fails **closed** (hidden).
+
+`Lang`: every player-facing string, from `config/diorama/messages.yml`, merged on upgrade through
+`messages.known` exactly as Standards' decision 6 describes. `&` codes are converted in templates
+only, never in anything a player typed.
+
+## Gotchas already paid for
+
+- ⚠ **Gradle's file-system watching does not work on `/mnt/d`** (drvfs sends no inotify). A newly
+  added class compiled as `cannot find symbol` from the class that used it. `gradle.properties`
+  sets `org.gradle.vfs.watch=false`; do not remove it.
+- ⚠ **Never `./gradlew --stop`** to clear a daemon here: it stops every daemon of that Gradle
+  version on the machine, sibling mods' dev servers included.
+- ⚠ **drvfs file times run ~40 s behind WSL's clock.** A "was this tile rewritten since T" check
+  by mtime said no while the tile had been redrawn. Compare contents (`md5sum`), not times.
+- `runServer` ends `BUILD FAILED` when the server is killed. That is the kill, not a build fault.
+
 ## Known gaps, in rough priority
 
-- Other view directions (NE/NW/SW), and a top-down flat view for low zooms.
+- A top-down flat view for very low zooms.
 - Per-block updates between saves.
 - Lighting: everything is drawn at noon. Sky light is in `SectionData` already.
 - Quads that extend outside their voxel (rare) are clipped to it.
 - Markers: Standards warps/homes, Factions claims, CityWorld districts — via a seam, as with
-  JourneyMap (`../SableCraft-Standards/MAP-API.md`). Vanished players should be hidden from
-  `/api/players` once Standards' vanish seam is consulted.
-- Messages are hard-coded English; the series uses a server-side `messages.yml` (Standards' `Lang`).
-- Speed: the first CityWorld render took ~0.4 s of wall clock per level-0 tile on 4 threads with
-  tiles on `/mnt/d`. Not yet profiled — the PNG writes and drvfs are suspects before the ray caster.
+  JourneyMap (`../SableCraft-Standards/MAP-API.md`).
+- Single player (`runClient`) is written but has not been run: it needs a display.

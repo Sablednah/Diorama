@@ -11,8 +11,12 @@ Open it in a browser. Nobody needs to install anything: it is a web page.
   and tells you the link when you join. It is never published to your network.
 - **Follows the world.** Chunks reach the map when the server saves them; nothing runs on the
   server thread, so the map can fall behind but the server cannot.
-- **Live player positions**, eight zoom levels, and a page that says why it is empty rather than
-  looking broken.
+- **Walk round it.** Four camera corners — turn with ⟲/⟳ or Q/E — so the street behind a tower is
+  never hidden from every side.
+- **Live player positions**, minus anyone the game is hiding: spectators, the invisible, and anyone
+  `/vanish`ed by SableCraft Standards
+  if it is installed.
+- Eight zoom levels, and a page that says why it is empty rather than looking broken.
 
 ## Setting up a dedicated server
 
@@ -33,6 +37,8 @@ changes are redrawn.
 | `/diorama render [dimension]` | operators | redraw a dimension from scratch |
 
 Set `web.publicUrl` if the server sits behind a proxy, so `/diorama` can give a working link.
+Every message is editable in `config/diorama/messages.yml`. `render.views` picks the camera corners;
+each one costs as much rendering and disk as the first.
 
 ## Building
 

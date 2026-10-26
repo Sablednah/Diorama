@@ -6,8 +6,31 @@
   const native = config.zoomOutLevels;            // leaflet zoom of level-0 tiles
   const scale = Math.pow(2, native);
 
+  // The camera's corner turns the world a quarter at a time before projecting: the same
+  // [a b; c d] as View.java, so a position lands on the same pixel the renderer drew it at.
+  const VIEWS = {
+    se: { m: [1, 0, 0, 1], looking: 'north-west' },
+    sw: { m: [0, 1, -1, 0], looking: 'north-east' },
+    nw: { m: [-1, 0, 0, -1], looking: 'south-east' },
+    ne: { m: [0, -1, 1, 0], looking: 'south-west' },
+  };
+  const ORDER = ['se', 'sw', 'nw', 'ne'].filter(v => (config.views || ['se']).includes(v));
+  const savedView = (() => { try { return localStorage.getItem('diorama.view'); } catch { return null; } })();
+  let view = ORDER.includes(savedView) ? savedView : ORDER[0];
+
   // World → screen pixels at level 0, exactly as IsoRenderer projects.
-  const project = (x, y, z) => [(x - z) * W / 2, (x + z) * W / 4 - y * W / 2];
+  const project = (x, y, z) => {
+    const [a, b, c, d] = VIEWS[view].m;
+    const vx = a * x + b * z, vz = c * x + d * z;
+    return [(vx - vz) * W / 2, (vx + vz) * W / 4 - y * W / 2];
+  };
+  // Screen → world, on the horizontal plane at height y.
+  const unproject = (sx, sy, y) => {
+    const u = 2 * sx / W, s = 4 * sy / W + 2 * y;
+    const vx = (s + u) / 2, vz = (s - u) / 2;
+    const [a, b, c, d] = VIEWS[view].m;
+    return [a * vx + c * vz, b * vx + d * vz];
+  };
   const toLatLng = (x, y, z) => { const [sx, sy] = project(x, y, z); return L.latLng(-sy / scale, sx / scale); };
 
   const map = L.map('map', {
@@ -35,7 +58,8 @@
       tileSize: config.tileSize, minZoom: 0, maxZoom: native + 2, maxNativeZoom: native, noWrap: true,
     });
     // Our levels count outward from the detailed tiles; Leaflet's zoom counts inward.
-    layer.getTileUrl = (c) => '/tiles/' + w.id + '/se/' + (native - c.z) + '/' + c.x + '_' + c.y + '.png';
+    const v = view;
+    layer.getTileUrl = (c) => '/tiles/' + w.id + '/' + v + '/' + (native - c.z) + '/' + c.x + '_' + c.y + '.png';
     layer.addTo(map);
     if (first) {
       const sx = w.spawnX ?? 0, sy = w.spawnY ?? w.seaLevel, sz = w.spawnZ ?? 0;
@@ -47,13 +71,42 @@
 
   select.addEventListener('change', () => show(true));
 
+  // Turning keeps the spot in the middle of the screen in the middle, so a turn reads as walking
+  // round the model rather than jumping somewhere else.
+  const facing = document.getElementById('facing');
+  function turn(step) {
+    if (ORDER.length < 2) return;
+    const centre = map.getCenter(), y = world().seaLevel;
+    const [x, z] = unproject(centre.lng * scale, -centre.lat * scale, y);
+    view = ORDER[(ORDER.indexOf(view) + step + ORDER.length) % ORDER.length];
+    try { localStorage.setItem('diorama.view', view); } catch { /* private window */ }
+    show(false);
+    map.setView(toLatLng(x, y, z), map.getZoom(), { animate: false });
+    label();
+  }
+  function label() {
+    facing.textContent = 'looking ' + VIEWS[view].looking;
+  }
+  document.getElementById('turn-left').addEventListener('click', () => turn(-1));
+  document.getElementById('turn-right').addEventListener('click', () => turn(1));
+  document.addEventListener('keydown', (e) => {
+    if (e.target instanceof HTMLSelectElement) return;
+    if (e.key === 'q' || e.key === 'Q') turn(-1);
+    if (e.key === 'e' || e.key === 'E') turn(1);
+  });
+  if (ORDER.length < 2) {
+    document.getElementById('turn-left').hidden = true;
+    document.getElementById('turn-right').hidden = true;
+  }
+  label();
+
   // Mouse → world, assuming sea level: a screen point is a whole line through the world, so the
   // readout picks the height most of the map sits at and says so.
   const coords = document.getElementById('coords');
   map.on('mousemove', (e) => {
-    const sx = e.latlng.lng * scale, sy = -e.latlng.lat * scale, y = world().seaLevel;
-    const u = 2 * sx / W, s = 4 * sy / W + 2 * y;
-    coords.textContent = `x ${Math.round((s + u) / 2)}  z ${Math.round((s - u) / 2)}  (at y ${y})`;
+    const y = world().seaLevel;
+    const [x, z] = unproject(e.latlng.lng * scale, -e.latlng.lat * scale, y);
+    coords.textContent = `x ${Math.round(x)}  z ${Math.round(z)}  (at y ${y})`;
   });
 
   async function refreshPlayers() {

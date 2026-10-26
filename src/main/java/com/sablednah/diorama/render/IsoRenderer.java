@@ -9,11 +9,11 @@ import com.sablednah.diorama.model.Quad;
 import com.sablednah.diorama.world.ChunkSnap;
 import com.sablednah.diorama.world.ChunkStore;
 import net.minecraft.core.Holder;
-import net.minecraft.tags.FluidTags;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.level.material.Fluids;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -55,6 +55,9 @@ public final class IsoRenderer {
     private final float[] hitAB = new float[2];
     private final Map<Long, ChunkSnap> chunks = new HashMap<>();
     private @Nullable ChunkStore store;
+    private int lastCx, lastCz;
+    private @Nullable ChunkSnap lastSnap;
+    private boolean lastValid;
 
     // The hit list for one voxel, front to back. A voxel can hold several faces a ray passes
     // through (glass in a frame, a waterlogged slab): they composite in order.
@@ -72,17 +75,24 @@ public final class IsoRenderer {
      * @param yTop the highest block top anywhere this tile could see
      * @return the tile as ARGB, or {@code null} when nothing at all was hit
      */
-    public int @Nullable [] render(ChunkStore store, int tx, int ty, int yTop, int yBottom) {
+    public int @Nullable [] render(ChunkStore store, View view, int tx, int ty, int yTop, int yBottom) {
         this.store = store;
+        this.dx = view.rayX();
+        this.dz = view.rayZ();
         chunks.clear();
+        lastValid = false;
         int[] out = new int[TILE * TILE];
         boolean any = false;
         float w = pixelsPerBlock;
         for (int py = 0; py < TILE; py++) {
             for (int px = 0; px < TILE; px++) {
-                float sx = tx * TILE + px + 0.5f;
-                float sy = ty * TILE + py + 0.5f;
-                int c = castRay(2f * sx / w, 4f * sy / w, yTop, yBottom);
+                double sx = (double) tx * TILE + px + 0.5;
+                double sy = (double) ty * TILE + py + 0.5;
+                // u = x' − z' and s = x' + z' − 2y identify the ray in view space; start it at yTop.
+                double u = 2.0 * sx / w, s = 4.0 * sy / w;
+                double vxs = (u + s) * 0.5 + yTop;
+                double vzs = (s - u) * 0.5 + yTop;
+                int c = castRay(view.worldX(vxs, vzs), yTop, view.worldZ(vxs, vzs), yBottom);
                 out[py * TILE + px] = c;
                 any |= c != 0;
             }
@@ -91,54 +101,62 @@ public final class IsoRenderer {
         return any ? out : null;
     }
 
-    /**
-     * {@code u = x − z} and {@code s = x + z − 2y} identify the ray; it starts at {@code yTop}.
-     */
-    private int castRay(float u, float s, int yTop, int yBottom) {
-        // Start point: on the ray, at height yTop.
-        float ox = (u + s) * 0.5f + yTop;
-        float oy = yTop;
-        float oz = (s - u) * 0.5f + yTop;
+    /** The world step of the current view's rays: Y is always −1, X and Z are ±1. */
+    private int dx = -1, dz = -1;
 
+    /**
+     * March from {@code (ox, oy, oz)} along {@code (dx, −1, dz)}. Every component is ±1, so the
+     * distance to the next boundary on an axis is measured in the same units as {@code t}.
+     *
+     * <p>Positions are doubles. A float holds a coordinate a few thousand blocks out to about a
+     * millimetre, and the nudge past each boundary is smaller than that, so far from spawn a float
+     * ray stops advancing and spins out its step budget drawing nothing.</p>
+     */
+    private int castRay(double ox, double oy, double oz, int yBottom) {
         // Front-to-back compositing, premultiplied.
         float r = 0, g = 0, b = 0, a = 0;
         boolean inWater = false;
 
-        float t = 0f;
+        double t = 0;
         for (int guard = 0; guard < 4096; guard++) {
-            // The voxel the ray is entering: on an exact boundary it is the one below/west/north.
-            float x = ox - t, y = oy - t, z = oz - t;
-            int vx = ceilMinusOne(x), vy = ceilMinusOne(y), vz = ceilMinusOne(z);
+            double x = ox + dx * t, y = oy - t, z = oz + dz * t;
+            // The voxel the ray is entering. On an exact boundary that is the one it is moving
+            // into, which is below on a falling axis and above on a rising one.
+            int vx = enter(x, dx), vy = enter(y, -1), vz = enter(z, dz);
             if (vy < yBottom) {
                 break;
             }
-            float tExit = t + Math.min(x - vx, Math.min(y - vy, z - vz));
+            double tExit = t + Math.min(toEdge(x, vx, dx, 1), Math.min(y - vy, toEdge(z, vz, dz, 1)));
 
             ChunkSnap chunk = chunk(vx >> 4, vz >> 4);
             if (chunk == null || chunk.section(vy) == null) {
                 // Nothing in this 16³ cell: jump to where the ray leaves it.
-                int cx = vx & ~15, cy = vy & ~15, cz = vz & ~15;
-                float skip = Math.min(x - cx, Math.min(y - cy, z - cz));
+                double skip = Math.min(toEdge(x, vx & ~15, dx, 16), Math.min(y - (vy & ~15), toEdge(z, vz & ~15, dz, 16)));
                 t += Math.max(skip, 1e-4f);
                 inWater = false;
                 continue;
             }
 
             BlockState state = chunk.block(vx, vy, vz);
-            hits = 0;
-            if (!state.isAir()) {
-                collectModelHits(state, chunk, vx, vy, vz, ox, oy, oz, t, tExit);
+            if (state.isAir()) {
+                // Most steps. Air holds no fluid and no faces: nothing to look up at all.
+                inWater = false;
+                t = tExit + 1e-5f;
+                continue;
             }
+            hits = 0;
+            collectModelHits(state, chunk, vx, vy, vz, ox, oy, oz, (float) t, (float) tExit);
             FluidState fluid = state.getFluidState();
             if (!fluid.isEmpty()) {
-                boolean isWater = fluid.is(FluidTags.WATER);
+                // A type comparison, not a tag lookup: the tag version was a visible slice of the profile.
+                boolean isWater = fluid.getType().isSame(Fluids.WATER);
                 float height = fluidHeight(chunk, vx, vy, vz, fluid);
-                float enterY = y - vy;
-                float tHit = enterY > height ? t + (enterY - height) : t;
+                double enterY = y - vy;
+                double tHit = enterY > height ? t + (enterY - height) : t;
                 boolean entered = tHit <= tExit;
                 if (entered && !(isWater && inWater)) {
-                    int c = fluidColor(isWater, chunk, vx, vy, vz, x - (tHit - t) - vx, z - (tHit - t) - vz, enterY > height);
-                    addHit(tHit, c);
+                    float lx = (float) (ox + dx * tHit - vx), lz = (float) (oz + dz * tHit - vz);
+                    addHit((float) tHit, fluidColor(isWater, chunk, vx, vy, vz, lx, lz, enterY > height));
                 }
                 // Only a ray that actually went into the water is "in" it. One that clipped the
                 // gap above a surface and left must still see the next block's surface — getting
@@ -168,19 +186,29 @@ public final class IsoRenderer {
         return a <= 0.004f ? 0 : pack(r / a, g / a, b / a, a);
     }
 
+    /** The cell a ray at {@code p} is entering along {@code dir}. */
+    private static int enter(double p, int dir) {
+        return dir < 0 ? (int) Math.ceil(p) - 1 : (int) Math.floor(p);
+    }
+
+    /** Distance along the ray to leave a cell of {@code size} whose low corner is {@code low}. */
+    private static double toEdge(double p, int low, int dir, int size) {
+        return dir < 0 ? p - low : low + size - p;
+    }
+
     private void collectModelHits(BlockState state, ChunkSnap chunk, int vx, int vy, int vz,
-                                  float ox, float oy, float oz, float tEnter, float tExit) {
+                                  double ox, double oy, double oz, float tEnter, float tExit) {
         BlockModels.Baked baked = models.get(state);
         Quad[] quads = baked.pick(vx, vy, vz);
         if (quads.length == 0) {
             return;
         }
         // Local origin: the ray's start relative to this voxel's corner. t stays global.
-        float lx = ox - vx, ly = oy - vy, lz = oz - vz;
+        float lx = (float) (ox - vx), ly = (float) (oy - vy), lz = (float) (oz - vz);
         Holder<Biome> biome = null;
         boolean biomeLooked = false;
         for (Quad q : quads) {
-            float th = q.intersect(lx, ly, lz, -1f, -1f, -1f, hitAB);
+            float th = q.intersect(lx, ly, lz, dx, -1f, dz, hitAB);
             if (Float.isNaN(th) || th < tEnter - 1e-4f || th > tExit + 1e-4f) {
                 continue;
             }
@@ -226,13 +254,25 @@ public final class IsoRenderer {
         return scale(lava.sample(frac(lx), frac(lz)) | 0xFF000000, top ? 1f : 0.8f);
     }
 
+    /**
+     * The chunk a ray step is in. A ray crosses a chunk boundary about once every sixteen steps, so
+     * the last answer is almost always the right one; the map behind it was the single largest
+     * cost in the profile (boxing a {@code Long} key on every step).
+     */
     private @Nullable ChunkSnap chunk(int cx, int cz) {
+        if (cx == lastCx && cz == lastCz && lastValid) {
+            return lastSnap;
+        }
         long key = ChunkPos.pack(cx, cz);
         ChunkSnap snap = chunks.get(key);
         if (snap == null && !chunks.containsKey(key)) {
             snap = store.get(cx, cz);
             chunks.put(key, snap);
         }
+        lastCx = cx;
+        lastCz = cz;
+        lastSnap = snap;
+        lastValid = true;
         return snap;
     }
 
@@ -257,10 +297,6 @@ public final class IsoRenderer {
             hitT[j + 1] = kt;
             hitColor[j + 1] = kc;
         }
-    }
-
-    private static int ceilMinusOne(float v) {
-        return (int) Math.ceil(v) - 1;
     }
 
     private static float frac(float v) {
