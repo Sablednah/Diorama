@@ -147,6 +147,13 @@ public final class DioramaService {
         }
         s.coordinator.shutdownNow();
         s.pool.shutdownNow();
+        // Saves not yet taken in: recorded now, so their heights and tiles are kept below
+        // rather than dropped with the queue. A whole night of generation once went that way.
+        try {
+            s.drainSaved();
+        } catch (RuntimeException e) {
+            Diorama.LOGGER.warn("Diorama: could not take in the last saves: {}", e.toString());
+        }
         for (MapRenderer map : s.maps.values()) {
             map.saveHeights();
         }
@@ -213,6 +220,10 @@ public final class DioramaService {
                     // Drawn before heights were kept: learn them once, without redrawing anything.
                     renderAll(e.getKey(), false);
                 } else {
+                    int learnt = e.getValue().learnUnknown(pool);
+                    if (learnt > 0) {
+                        Diorama.LOGGER.info("Diorama: {} — {} chunk(s) saved but never mapped, read", e.getKey().identifier(), learnt);
+                    }
                     int missing = e.getValue().queueMissing();
                     if (missing > 0) {
                         Diorama.LOGGER.info("Diorama: {} — {} tile(s) never drawn, queued", e.getKey().identifier(), missing);
@@ -428,7 +439,11 @@ public final class DioramaService {
         }
         fullRender = name + ": drawing " + map.pendingTiles() + " tiles";
         int before = map.renderedTiles();
-        map.renderDirty(pool, renderers);
+        // Each pass draws a capped share per view; a full render keeps going until it is done.
+        while (map.pendingTiles() > 0 && !Thread.currentThread().isInterrupted()) {
+            map.renderDirty(pool, renderers);
+            fullRender = name + ": drawing, " + map.pendingTiles() + " tiles to go";
+        }
         fullRender = null;
         Diorama.LOGGER.info("Diorama: {} drawn — {} tiles in {}s", name, map.renderedTiles() - before,
                 (System.nanoTime() - start) / 1_000_000_000L);

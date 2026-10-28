@@ -52,6 +52,12 @@ public final class MapRenderer {
         /** Level-0 tiles waiting to be drawn. */
         final Set<Long> dirty = ConcurrentHashMap.newKeySet();
         /**
+         * Taken from {@link #dirty} into the current batch and not finished yet. Counted as waiting
+         * and saved with it: left out, the status read "0 waiting" through a 30,000-tile batch and
+         * a restart mid-batch lost the lot.
+         */
+        final Set<Long> drawing = ConcurrentHashMap.newKeySet();
+        /**
          * The highest block top each tile has ever been told about. It only rises: a tile is
          * marked by one changed chunk at a time, and starting its rays at that one chunk's height
          * would cut the top off a taller neighbour that shares the tile.
@@ -119,6 +125,7 @@ public final class MapRenderer {
                 out.writeInt(layers.size());
                 for (var e : layers.entrySet()) {
                     java.util.List<Long> tiles = new ArrayList<>(e.getValue().dirty);
+                    tiles.addAll(e.getValue().drawing);
                     out.writeUTF(e.getKey());
                     out.writeInt(tiles.size());
                     for (long t : tiles) {
@@ -193,6 +200,33 @@ public final class MapRenderer {
             com.sablednah.diorama.Diorama.LOGGER.warn("Diorama: {} could not be read ({}); this map will be surveyed again",
                     heightsFile, e.toString());
         }
+    }
+
+    /**
+     * Read and record every chunk on disk that has no heights yet — saved while the queue that
+     * carries saves to the map was lost to a crash or a restart. Its tiles are then found by
+     * {@link #queueMissing}. Half-generated chunks at the edge are read and dropped each start.
+     * Blocks the calling thread, which must not be the server's.
+     */
+    public int learnUnknown(ExecutorService pool) {
+        store.scan();
+        List<Future<?>> reads = new ArrayList<>();
+        java.util.concurrent.atomic.AtomicInteger learnt = new java.util.concurrent.atomic.AtomicInteger();
+        for (long packed : store.existing()) {
+            if (extents.containsKey(packed)) {
+                continue;
+            }
+            int cx = ChunkPos.getX(packed), cz = ChunkPos.getZ(packed);
+            reads.add(pool.submit(() -> {
+                ChunkSnap snap = store.get(cx, cz);
+                if (snap != null) {
+                    recordChunk(cx, cz, snap);
+                    learnt.incrementAndGet();
+                }
+            }));
+        }
+        await(reads);
+        return learnt.get();
     }
 
     /**
@@ -300,7 +334,7 @@ public final class MapRenderer {
     public int pendingTiles() {
         int n = 0;
         for (Layer l : layers.values()) {
-            n += l.dirty.size();
+            n += l.dirty.size() + l.drawing.size();
         }
         return n;
     }
@@ -383,20 +417,30 @@ public final class MapRenderer {
         }
     }
 
+    /** Tiles one view draws per pass before the next view, and the next world, get a turn. */
+    private static final int BATCH = 512;
+
     private void renderDirty(Layer layer, ExecutorService pool, ThreadLocal<IsoRenderer> renderers) {
         Set<Long> dirty = layer.dirty;
         TileStore tiles = layer.tiles;
         if (dirty.isEmpty()) {
             return;
         }
-        List<Long> batch = new ArrayList<>(dirty);
-        dirty.removeAll(batch);
         // Row order keeps neighbouring tiles — which share chunks — close together in time, so
         // the chunk cache holds what the next tile needs.
+        List<Long> batch = new ArrayList<>(dirty);
         batch.sort((a, b) -> {
             int c = Integer.compare(unpackY(a), unpackY(b));
             return c != 0 ? c : Integer.compare(unpackX(a), unpackX(b));
         });
+        // A capped share per pass, so every view and every world takes turns: uncapped, one
+        // view's 30,000-tile backlog held the coordinator for an hour while a whole dimension
+        // sat at "0 drawn".
+        if (batch.size() > BATCH) {
+            batch = new ArrayList<>(batch.subList(0, BATCH));
+        }
+        layer.drawing.addAll(batch);
+        dirty.removeAll(batch);
 
         int bottom = store.level().getMinY();
         int ceiling = store.level().getMaxY() + 1;
@@ -413,6 +457,8 @@ public final class MapRenderer {
                     rendered.incrementAndGet();
                 } catch (IOException | RuntimeException ex) {
                     Diorama.LOGGER.warn("Diorama: tile {},{} failed: {}", tx, ty, ex.toString());
+                } finally {
+                    layer.drawing.remove(key);
                 }
             }));
         }

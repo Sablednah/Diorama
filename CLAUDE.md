@@ -285,6 +285,15 @@ Chrome's window frame, not missing tiles. Links are `#world/view/x/z/zoom`, x/z 
   37 s, nothing redrawn); and every start queues any tile a known chunk should have drawn that has
   no file. Tiles that drew empty at the world's edge come back through that check each start, by
   design — few, and cheap.
+- ⚠ **One pass must never draw everything.** `renderDirty` once took each view's whole backlog,
+  and saved chunks are taken in only between passes — so a 183,000-tile pass held the coordinator
+  for five hours, during which a whole dimension sat at "0 drawn" and **every chunk saved meanwhile
+  waited in a memory queue that the next restart threw away**: 35,244 freshly generated chunks
+  never reached the map. And the batch was removed from the queue as it started, so the status
+  read "0 waiting" through it. Now: 512 tiles per view per pass (every world takes turns), tiles
+  being drawn count as waiting and are saved with the queue, `stop()` takes in the last saves
+  before writing `heights.bin`, and every start reads any chunk on disk with no recorded heights
+  (`learnUnknown`) — so a crash costs a redraw, never a hole.
 - ⚠ **A disk read must not overwrite a fresher save.** `ChunkStore.get` read a chunk from its
   region file while the save of the same chunk arrived through `accept()`, then `put` the older
   copy over it — often the half-generated one, which reads as "no chunk". The tile drew empty and
