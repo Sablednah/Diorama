@@ -154,8 +154,13 @@ walk itself (`Quad.intersect`) was fourth. A full render went 80 s → 16 s.
 
 ### 5. Tiles
 
-`<world>/diorama/tiles/<namespace_path>/<view>/<level>/<tx>_<ty>.png`, inside the **save**, so each
-single-player world has its own map. Level 0 is ray cast; levels 1–8 are 2×2 downsamples. A chunk
+`<game dir>/diorama/tiles/<save folder>/<namespace_path>/<view>/<level>/<tx>_<ty>.png` — keyed by
+the save, so each single-player world has its own map, but **outside** it. ⚠ They used to live in
+the save, and that cost twice: vanilla's `DirectoryValidator` walks every file of the world on start
+looking for symbolic links, so 700,000 tiles held a 4 km map's boot for over ten minutes on drvfs;
+and every world backup carried gigabytes of cache. Old tiles are moved once on start
+(`DioramaService.tilesHome`, self-tested). What *is* the world's — `regions.json`,
+`cityworld-landmarks.json` — stays in `<save>/diorama/`. Level 0 is ray cast; levels 1–8 are 2×2 downsamples. A chunk
 marks dirty every tile its screen-space box touches (columns × the span from its lowest column top
 to its highest). A tile's ray start height only ever rises (`MapRenderer.tops`), and until a full
 render has surveyed every chunk, rays start at the build limit — cheap, because empty sections are
@@ -294,6 +299,17 @@ Chrome's window frame, not missing tiles. Links are `#world/view/x/z/zoom`, x/z 
   being drawn count as waiting and are saved with the queue, `stop()` takes in the last saves
   before writing `heights.bin`, and every start reads any chunk on disk with no recorded heights
   (`learnUnknown`) — so a crash costs a redraw, never a hole.
+- ⚠ **A stale zoom tile is worse than a missing one.** A pass writes level 0, then shrinks it
+  into the zoom levels; stopped between the two, the zoom tiles were left either missing or built
+  from children that did not exist yet — a black ring round a 4 km map at every zoom but the
+  closest, which nothing would ever revisit because the tiles *existed*. Now a batch stays in
+  `drawing` (saved with the queue) until its zoom levels are done, and after an unclean stop
+  `repairZoom` rebuilds any zoom tile missing or older than a child. Start-up repairs run only
+  then: `stop()` writes `stopped-cleanly` beside the tiles last, and a start that finds it skips
+  the listing of every tile (minutes on a big map).
+- ⚠ **A chunk new to the map owes its neighbours a redraw.** `learnUnknown` first only recorded
+  what it found, so its own missing tiles were drawn but the tiles beside it — drawn when it was
+  void — kept their black steps above towers and grey cut-away rock. It marks now, like a save.
 - ⚠ **A disk read must not overwrite a fresher save.** `ChunkStore.get` read a chunk from its
   region file while the save of the same chunk arrived through `accept()`, then `put` the older
   copy over it — often the half-generated one, which reads as "no chunk". The tile drew empty and

@@ -103,6 +103,13 @@ public final class MapRenderer {
         }
         this.pixelsPerBlock = pixelsPerBlock;
         this.heightsFile = root.resolve("heights.bin");
+        Path clean = root.resolve("stopped-cleanly");
+        this.cleanStart = java.nio.file.Files.isRegularFile(clean);
+        try {
+            java.nio.file.Files.deleteIfExists(clean);
+        } catch (IOException e) {
+            Diorama.LOGGER.warn("Diorama: could not clear {}: {}", clean, e.toString());
+        }
         loadHeights();
         loadPending();
     }
@@ -166,6 +173,28 @@ public final class MapRenderer {
         }
     }
 
+    /**
+     * Whether the last run stopped cleanly — heights, queue and zoom levels all written. Only
+     * after a crash (or the first start of a version that keeps this marker) are the start-up
+     * repairs worth what they cost: they list every tile, which on a 4 km map takes minutes.
+     */
+    private final boolean cleanStart;
+
+    public boolean cleanStart() {
+        return cleanStart;
+    }
+
+    /** Last thing on stop, after {@link #saveHeights}: the next start can trust what is on disk. */
+    public void markStoppedCleanly() {
+        Path clean = heightsFile.resolveSibling("stopped-cleanly");
+        try {
+            java.nio.file.Files.createDirectories(clean.getParent());
+            java.nio.file.Files.writeString(clean, "Diorama stopped cleanly. Deleted on start; absent means the start-up repairs run.\n");
+        } catch (IOException e) {
+            Diorama.LOGGER.warn("Diorama: could not write {}: {}", clean, e.toString());
+        }
+    }
+
     /** How many chunks' heights came back from disk; 0 for a map that has never been surveyed. */
     public int loadedHeights() {
         return loadedHeights;
@@ -220,7 +249,10 @@ public final class MapRenderer {
             reads.add(pool.submit(() -> {
                 ChunkSnap snap = store.get(cx, cz);
                 if (snap != null) {
-                    recordChunk(cx, cz, snap);
+                    // Marked, not merely recorded: new to the map, so the tiles beside it —
+                    // drawn when this was void — are owed a redraw too. Recorded only, a 4 km
+                    // map kept a black seam along its old edge.
+                    markChunk(cx, cz, snap);
                     learnt.incrementAndGet();
                 }
             }));
@@ -238,26 +270,7 @@ public final class MapRenderer {
     public int queueMissing() {
         java.util.Map<Layer, java.util.Set<Long>> present = new java.util.HashMap<>();
         for (Layer l : layers.values()) {
-            java.util.Set<Long> have = new HashSet<>();
-            Path dir = l.tiles.root().resolve("0");
-            if (java.nio.file.Files.isDirectory(dir)) {
-                try (var files = java.nio.file.Files.list(dir)) {
-                    files.forEach(f -> {
-                        String name = f.getFileName().toString();
-                        int us = name.indexOf('_'), dot = name.lastIndexOf(".png");
-                        if (us > 0 && dot > us) {
-                            try {
-                                have.add(pack(Integer.parseInt(name.substring(0, us)), Integer.parseInt(name.substring(us + 1, dot))));
-                            } catch (NumberFormatException ignored) {
-                                // not a tile
-                            }
-                        }
-                    });
-                } catch (java.io.IOException e) {
-                    com.sablednah.diorama.Diorama.LOGGER.warn("Diorama: could not list {}: {}", dir, e.toString());
-                    continue;
-                }
-            }
+            java.util.Set<Long> have = listTiles(l.tiles.root().resolve("0"));
             present.put(l, have);
         }
         int before = pendingTiles();
@@ -457,8 +470,6 @@ public final class MapRenderer {
                     rendered.incrementAndGet();
                 } catch (IOException | RuntimeException ex) {
                     Diorama.LOGGER.warn("Diorama: tile {},{} failed: {}", tx, ty, ex.toString());
-                } finally {
-                    layer.drawing.remove(key);
                 }
             }));
         }
@@ -484,6 +495,108 @@ public final class MapRenderer {
             await(up);
             level = parents;
         }
+        // Only now: a tile drawn but not yet shrunk into the zoom levels is still owed work, and
+        // a restart between the two left holes in every zoomed-out view of it. Interrupted (the
+        // server stopping), the batch stays owed and is saved with the queue.
+        if (!Thread.currentThread().isInterrupted()) {
+            layer.drawing.removeAll(batch);
+        }
+    }
+
+    /**
+     * Rebuild every zoom tile that is missing while its children exist, or older than any of them —
+     * left by a stop between a pass's tiles and its zoom levels, before {@link Layer#drawing}
+     * covered that gap. A stale one is the worse case: it exists, so nothing else will ever
+     * revisit it, and it keeps the holes its children had when it was built — a whole ring of a
+     * 4 km map stayed black at every zoom but the closest. Levels run bottom-up and are re-listed,
+     * so a rebuild carries upwards. File times are compared only with each other, all written by
+     * this process, so a clock skew between filesystems (drvfs runs ~40 s behind) cancels out.
+     * Returns how many were built. Blocks the calling thread, which must not be the server's.
+     */
+    public int repairZoom(ExecutorService pool) {
+        int built = 0;
+        for (Layer l : layers.values()) {
+            for (int z = 1; z <= TileStore.ZOOM_OUT_LEVELS; z++) {
+                Map<Long, Long> below = tileTimes(l.tiles.root().resolve(Integer.toString(z - 1)));
+                Map<Long, Long> here = tileTimes(l.tiles.root().resolve(Integer.toString(z)));
+                Map<Long, Long> newestChild = new java.util.HashMap<>();
+                for (var e : below.entrySet()) {
+                    long k = e.getKey();
+                    newestChild.merge(pack(Math.floorDiv(unpackX(k), 2), Math.floorDiv(unpackY(k), 2)), e.getValue(), Math::max);
+                }
+                Set<Long> owed = new HashSet<>();
+                newestChild.forEach((parent, t) -> {
+                    Long mine = here.get(parent);
+                    if (mine == null || mine < t) {
+                        owed.add(parent);
+                    }
+                });
+                int lz = z;
+                List<Future<?>> jobs = new ArrayList<>(owed.size());
+                for (long k : owed) {
+                    jobs.add(pool.submit(() -> {
+                        try {
+                            l.tiles.downsample(lz, unpackX(k), unpackY(k));
+                        } catch (IOException | RuntimeException ex) {
+                            Diorama.LOGGER.warn("Diorama: zoom tile {}/{},{} failed: {}", lz, unpackX(k), unpackY(k), ex.toString());
+                        }
+                    }));
+                }
+                await(jobs);
+                built += owed.size();
+            }
+        }
+        return built;
+    }
+
+    /** Each tile in one zoom level's folder, packed, with its modification time; empty when there is no folder. */
+    private static Map<Long, Long> tileTimes(Path dir) {
+        Map<Long, Long> out = new java.util.HashMap<>();
+        if (!java.nio.file.Files.isDirectory(dir)) {
+            return out;
+        }
+        try (var files = java.nio.file.Files.newDirectoryStream(dir, "*.png")) {
+            for (Path f : files) {
+                String name = f.getFileName().toString();
+                int us = name.indexOf('_'), dot = name.lastIndexOf(".png");
+                if (us <= 0 || dot <= us) {
+                    continue;
+                }
+                try {
+                    long key = pack(Integer.parseInt(name.substring(0, us)), Integer.parseInt(name.substring(us + 1, dot)));
+                    out.put(key, java.nio.file.Files.getLastModifiedTime(f).toMillis());
+                } catch (NumberFormatException | IOException ignored) {
+                    // not a tile, or gone since the listing
+                }
+            }
+        } catch (IOException e) {
+            Diorama.LOGGER.warn("Diorama: could not list {}: {}", dir, e.toString());
+        }
+        return out;
+    }
+
+    /** The tiles in one zoom level's folder, packed; empty when it does not exist. */
+    private static Set<Long> listTiles(Path dir) {
+        Set<Long> have = new HashSet<>();
+        if (!java.nio.file.Files.isDirectory(dir)) {
+            return have;
+        }
+        try (var files = java.nio.file.Files.list(dir)) {
+            files.forEach(f -> {
+                String name = f.getFileName().toString();
+                int us = name.indexOf('_'), dot = name.lastIndexOf(".png");
+                if (us > 0 && dot > us) {
+                    try {
+                        have.add(pack(Integer.parseInt(name.substring(0, us)), Integer.parseInt(name.substring(us + 1, dot))));
+                    } catch (NumberFormatException ignored) {
+                        // not a tile
+                    }
+                }
+            });
+        } catch (IOException e) {
+            Diorama.LOGGER.warn("Diorama: could not list {}: {}", dir, e.toString());
+        }
+        return have;
     }
 
     private static void await(List<Future<?>> jobs) {

@@ -60,6 +60,7 @@ final class SelfTest {
         pickFindsTheGround(service);
         roofIsCutAway(service);
         heightsSurviveARestart(service);
+        tilesMoveOutOfTheSave();
         integrationsLinked();
         factionsEndToEnd(service);
         cityWorldAnswers(service);
@@ -146,6 +147,39 @@ final class SelfTest {
         check(Math.abs(maxY - 0.5f) < 1e-4f, "a bottom slab should top out at half a block, got " + maxY);
     }
 
+    /** Tiles from before they lived beside the server are moved out of the save, once. */
+    private static void tilesMoveOutOfTheSave() {
+        java.nio.file.Path save = null, home = null;
+        try {
+            // Inside the game folder, like a real save: a rename cannot cross filesystems, and
+            // across them the tiles are deliberately left where they are.
+            java.nio.file.Path scratch = net.neoforged.fml.loading.FMLPaths.GAMEDIR.get().resolve("diorama").resolve("selftest");
+            java.nio.file.Files.createDirectories(scratch);
+            save = java.nio.file.Files.createTempDirectory(scratch, "save");
+            java.nio.file.Path old = save.resolve("diorama").resolve("tiles").resolve("minecraft_overworld");
+            java.nio.file.Files.createDirectories(old);
+            java.nio.file.Files.writeString(old.resolve("marker.txt"), "moved");
+            home = DioramaService.tilesHome(save);
+            check(!home.startsWith(save), "tiles: still inside the save at " + home);
+            check(java.nio.file.Files.isRegularFile(home.resolve("minecraft_overworld").resolve("marker.txt")),
+                    "tiles: the old tiles did not arrive at " + home);
+            check(!java.nio.file.Files.exists(save.resolve("diorama").resolve("tiles")), "tiles: the old folder is still in the save");
+            check(DioramaService.tilesHome(save).equals(home), "tiles: a second start chose somewhere else");
+        } catch (java.io.IOException e) {
+            check(false, "tiles: scratch save failed (" + e + ")");
+        } finally {
+            for (java.nio.file.Path p : new java.nio.file.Path[] {save, home}) {
+                if (p != null && java.nio.file.Files.exists(p)) {
+                    try (var files = java.nio.file.Files.walk(p)) {
+                        files.sorted(java.util.Comparator.reverseOrder()).forEach(f -> f.toFile().delete());
+                    } catch (java.io.IOException ignored) {
+                        // the OS clears temp folders; the game dir copy is a few bytes
+                    }
+                }
+            }
+        }
+    }
+
     /**
      * A chunk's heights, saved and read back by a second renderer over the same folder — which is
      * what a restart is. Without them every restart began unsurveyed and redraws crawled.
@@ -179,6 +213,18 @@ final class SelfTest {
         check(second.loadedHeights() == 1, "heights: saved 1 chunk, read back " + second.loadedHeights());
         // The scratch folder holds no tiles, so every tile that chunk touches is owed a drawing.
         check(second.queueMissing() > 0, "heights: a known chunk with no tiles queued nothing to draw");
+        // A tile drawn but never shrunk — a stop between the two — gets its zoom levels on start.
+        try {
+            int[] argb = new int[com.sablednah.diorama.render.IsoRenderer.TILE * com.sablednah.diorama.render.IsoRenderer.TILE];
+            java.util.Arrays.fill(argb, 0xFF336699);
+            second.tiles(View.SE, false).write(0, 3, 5, argb);
+            int built = second.repairZoom(service.pool());
+            check(built == com.sablednah.diorama.render.TileStore.ZOOM_OUT_LEVELS,
+                    "zoom: one tile with no zoom levels built " + built + ", not " + com.sablednah.diorama.render.TileStore.ZOOM_OUT_LEVELS);
+            check(second.repairZoom(service.pool()) == 0, "zoom: a second repair built tiles again");
+        } catch (java.io.IOException e) {
+            check(false, "zoom: could not write a scratch tile (" + e + ")");
+        }
         try (var files = java.nio.file.Files.walk(root)) {
             files.sorted(java.util.Comparator.reverseOrder()).forEach(f -> f.toFile().delete());
         } catch (java.io.IOException ignored) {

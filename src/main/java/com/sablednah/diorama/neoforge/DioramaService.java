@@ -60,6 +60,8 @@ public final class DioramaService {
 
     private final MinecraftServer server;
     private final Path worldRoot;
+    /** Where this world's tiles live: beside the server, not in the save. See {@link #tilesHome}. */
+    private final Path tilesBase;
     private final boolean dedicated;
     private volatile State state = State.STARTING;
     private volatile String stateDetail = "";
@@ -109,6 +111,7 @@ public final class DioramaService {
     private DioramaService(MinecraftServer server) {
         this.server = server;
         this.worldRoot = server.getWorldPath(LevelResource.ROOT);
+        this.tilesBase = tilesHome(worldRoot);
         this.dedicated = server.isDedicatedServer();
         this.pool = Executors.newFixedThreadPool(DioramaConfig.RENDER_THREADS.get(), threads("Diorama-render"));
         this.coordinator = Executors.newSingleThreadScheduledExecutor(threads("Diorama-coordinator"));
@@ -154,8 +157,20 @@ public final class DioramaService {
         } catch (RuntimeException e) {
             Diorama.LOGGER.warn("Diorama: could not take in the last saves: {}", e.toString());
         }
+        // Only after the pool has finished: a pass cut off mid-way leaves its tiles in the saved
+        // queue, but a zoom level it was writing would be stale, and only the repair finds that.
+        boolean finished;
+        try {
+            finished = s.pool.awaitTermination(10, TimeUnit.SECONDS) && s.coordinator.awaitTermination(10, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            finished = false;
+        }
         for (MapRenderer map : s.maps.values()) {
             map.saveHeights();
+            if (finished) {
+                map.markStoppedCleanly();
+            }
         }
     }
 
@@ -219,10 +234,16 @@ public final class DioramaService {
                 } else if (e.getValue().loadedHeights() == 0) {
                     // Drawn before heights were kept: learn them once, without redrawing anything.
                     renderAll(e.getKey(), false);
-                } else {
+                } else if (!e.getValue().cleanStart()) {
+                    // A crash, or the first start of this version: check what is on disk.
+                    Diorama.LOGGER.info("Diorama: {} did not stop cleanly last time; checking its tiles", e.getKey().identifier());
                     int learnt = e.getValue().learnUnknown(pool);
                     if (learnt > 0) {
                         Diorama.LOGGER.info("Diorama: {} — {} chunk(s) saved but never mapped, read", e.getKey().identifier(), learnt);
+                    }
+                    int zoom = e.getValue().repairZoom(pool);
+                    if (zoom > 0) {
+                        Diorama.LOGGER.info("Diorama: {} — {} zoomed-out tile(s) missing or out of date, rebuilt", e.getKey().identifier(), zoom);
                     }
                     int missing = e.getValue().queueMissing();
                     if (missing > 0) {
@@ -595,6 +616,11 @@ public final class DioramaService {
         return server;
     }
 
+    /** The render pool, for the self-test's repairs. */
+    ExecutorService pool() {
+        return pool;
+    }
+
     public Map<ResourceKey<Level>, MapRenderer> maps() {
         return maps;
     }
@@ -605,7 +631,35 @@ public final class DioramaService {
 
     /** The folder holding one folder per view for {@code level}. */
     public Path tileRoot(ResourceKey<Level> level) {
-        return worldRoot.resolve("diorama").resolve("tiles").resolve(worldId(level));
+        return tilesBase.resolve(worldId(level));
+    }
+
+    /**
+     * {@code <game dir>/diorama/tiles/<save folder>/}: one map per world, as before, but outside
+     * the save. Tiles are a cache, and inside the save they cost twice: vanilla walks every file
+     * of the world on start looking for symbolic links — over 700,000 tiles held a 4 km map's
+     * boot for more than ten minutes — and every world backup carried gigabytes of them.
+     *
+     * <p>Tiles from before this sit in {@code <save>/diorama/tiles} and are moved here once. If
+     * the move fails (another drive), they are left where they are and used from there.</p>
+     */
+    static Path tilesHome(Path worldRoot) {
+        Path save = worldRoot.toAbsolutePath().normalize();
+        Path home = FMLPaths.GAMEDIR.get().resolve("diorama").resolve("tiles").resolve(save.getFileName().toString());
+        Path old = save.resolve("diorama").resolve("tiles");
+        if (java.nio.file.Files.isDirectory(old) && !java.nio.file.Files.exists(home)) {
+            try {
+                java.nio.file.Files.createDirectories(home.getParent());
+                java.nio.file.Files.move(old, home);
+                Diorama.LOGGER.info("Diorama: map tiles moved out of the save, to {}", home);
+            } catch (java.io.IOException e) {
+                Diorama.LOGGER.warn("Diorama: could not move the map tiles from {} to {} ({}); using them where they are."
+                        + " Move the folder by hand while the server is stopped: inside the save, every start walks every tile.",
+                        old, home, e.toString());
+                return old;
+            }
+        }
+        return home;
     }
 
     /** {@code minecraft:overworld} → {@code minecraft_overworld}: safe in a URL and a path. */
