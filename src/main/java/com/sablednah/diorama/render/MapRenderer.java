@@ -75,6 +75,16 @@ public final class MapRenderer {
 
     private final AtomicInteger rendered = new AtomicInteger();
 
+    /**
+     * {@link #extents}, kept on disk. Without it every restart began unsurveyed, every ray started
+     * at the build limit, and a tile read far more chunks than the cache holds: on a 65,536-chunk
+     * CityWorld map the live redraw fell from 23 tiles a second to 4.
+     */
+    private final Path heightsFile;
+    private volatile boolean heightsChanged;
+    private volatile long heightsSaved = System.nanoTime();
+    private static final int HEIGHTS_MAGIC = 0x44494F31; // "DIO1"
+
     /** {@code root} holds one folder per view and time: {@code <root>/se/0/…}, {@code <root>/se-night/0/…}. */
     public MapRenderer(ChunkStore store, Path root, Set<View> views, boolean night, int pixelsPerBlock) {
         this.store = store;
@@ -86,6 +96,176 @@ public final class MapRenderer {
             }
         }
         this.pixelsPerBlock = pixelsPerBlock;
+        this.heightsFile = root.resolve("heights.bin");
+        loadHeights();
+        loadPending();
+    }
+
+    /**
+     * Tiles still waiting, kept beside the heights. Held only in memory, a restart threw the queue
+     * away: a changed building stayed drawn as it was, and a mass-generated area stayed blank.
+     */
+    private void savePending() {
+        Path file = heightsFile.resolveSibling("pending.bin");
+        try {
+            if (pendingTiles() == 0) {
+                java.nio.file.Files.deleteIfExists(file);
+                return;
+            }
+            Path tmp = file.resolveSibling("pending.bin.tmp");
+            java.nio.file.Files.createDirectories(file.getParent());
+            try (var out = new java.io.DataOutputStream(new java.io.BufferedOutputStream(java.nio.file.Files.newOutputStream(tmp)))) {
+                out.writeInt(HEIGHTS_MAGIC);
+                out.writeInt(layers.size());
+                for (var e : layers.entrySet()) {
+                    java.util.List<Long> tiles = new ArrayList<>(e.getValue().dirty);
+                    out.writeUTF(e.getKey());
+                    out.writeInt(tiles.size());
+                    for (long t : tiles) {
+                        out.writeLong(t);
+                    }
+                }
+            }
+            java.nio.file.Files.move(tmp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        } catch (java.io.IOException e) {
+            com.sablednah.diorama.Diorama.LOGGER.warn("Diorama: could not save {}: {}", file, e.toString());
+        }
+    }
+
+    private void loadPending() {
+        Path file = heightsFile.resolveSibling("pending.bin");
+        if (!java.nio.file.Files.isRegularFile(file)) {
+            return;
+        }
+        try (var in = new java.io.DataInputStream(new java.io.BufferedInputStream(java.nio.file.Files.newInputStream(file)))) {
+            if (in.readInt() != HEIGHTS_MAGIC) {
+                return;
+            }
+            int layerCount = in.readInt();
+            for (int i = 0; i < layerCount; i++) {
+                Layer l = layers.get(in.readUTF());
+                int n = in.readInt();
+                for (int j = 0; j < n; j++) {
+                    long t = in.readLong();
+                    if (l != null) { // a view switched off since: its queue goes with it
+                        l.dirty.add(t);
+                    }
+                }
+            }
+        } catch (java.io.IOException | RuntimeException e) {
+            com.sablednah.diorama.Diorama.LOGGER.warn("Diorama: {} could not be read ({}); missing tiles are still found on start",
+                    file, e.toString());
+        }
+    }
+
+    /** How many chunks' heights came back from disk; 0 for a map that has never been surveyed. */
+    public int loadedHeights() {
+        return loadedHeights;
+    }
+
+    private int loadedHeights;
+
+    private void loadHeights() {
+        if (!java.nio.file.Files.isRegularFile(heightsFile)) {
+            return;
+        }
+        try (var in = new java.io.DataInputStream(new java.io.BufferedInputStream(java.nio.file.Files.newInputStream(heightsFile)))) {
+            if (in.readInt() != HEIGHTS_MAGIC) {
+                return;
+            }
+            int n = in.readInt();
+            for (int i = 0; i < n; i++) {
+                long key = in.readLong();
+                int low = in.readInt(), high = in.readInt();
+                extents.put(key, new int[] {low, high});
+                cover(ChunkPos.getX(key), ChunkPos.getZ(key), low, high, null);
+            }
+            loadedHeights = n;
+            // Every chunk that existed when it was written: a chunk generated since has no entry,
+            // and its tiles start at the build limit, which is slow but cannot miss anything.
+            surveyed = true;
+        } catch (java.io.IOException | RuntimeException e) {
+            extents.clear();
+            for (Layer l : layers.values()) {
+                l.tops.clear();
+            }
+            com.sablednah.diorama.Diorama.LOGGER.warn("Diorama: {} could not be read ({}); this map will be surveyed again",
+                    heightsFile, e.toString());
+        }
+    }
+
+    /**
+     * Queue every tile some known chunk should have drawn and that has no file: what a crash,
+     * or a restart before pending tiles were kept, left undrawn. Tiles that drew empty at the
+     * world's edge are deleted by design and come back here each start; they are few and cheap.
+     * Returns how many were queued.
+     */
+    public int queueMissing() {
+        java.util.Map<Layer, java.util.Set<Long>> present = new java.util.HashMap<>();
+        for (Layer l : layers.values()) {
+            java.util.Set<Long> have = new HashSet<>();
+            Path dir = l.tiles.root().resolve("0");
+            if (java.nio.file.Files.isDirectory(dir)) {
+                try (var files = java.nio.file.Files.list(dir)) {
+                    files.forEach(f -> {
+                        String name = f.getFileName().toString();
+                        int us = name.indexOf('_'), dot = name.lastIndexOf(".png");
+                        if (us > 0 && dot > us) {
+                            try {
+                                have.add(pack(Integer.parseInt(name.substring(0, us)), Integer.parseInt(name.substring(us + 1, dot))));
+                            } catch (NumberFormatException ignored) {
+                                // not a tile
+                            }
+                        }
+                    });
+                } catch (java.io.IOException e) {
+                    com.sablednah.diorama.Diorama.LOGGER.warn("Diorama: could not list {}: {}", dir, e.toString());
+                    continue;
+                }
+            }
+            present.put(l, have);
+        }
+        int before = pendingTiles();
+        for (var e : extents.entrySet()) {
+            long key = e.getKey();
+            cover(ChunkPos.getX(key), ChunkPos.getZ(key), e.getValue()[0], e.getValue()[1], (l, tile) -> {
+                java.util.Set<Long> have = present.get(l);
+                if (have != null && !have.contains(tile)) {
+                    l.dirty.add(tile);
+                }
+            });
+        }
+        return pendingTiles() - before;
+    }
+
+    /** Write {@link #extents} if it changed, through a temporary file. Any thread. */
+    public synchronized void saveHeights() {
+        savePending();
+        if (!heightsChanged) {
+            return;
+        }
+        heightsChanged = false;
+        heightsSaved = System.nanoTime();
+        Path tmp = heightsFile.resolveSibling("heights.bin.tmp");
+        try {
+            java.nio.file.Files.createDirectories(heightsFile.getParent());
+            var copy = new java.util.HashMap<>(extents);
+            try (var out = new java.io.DataOutputStream(new java.io.BufferedOutputStream(java.nio.file.Files.newOutputStream(tmp)))) {
+                out.writeInt(HEIGHTS_MAGIC);
+                out.writeInt(copy.size());
+                for (var e : copy.entrySet()) {
+                    out.writeLong(e.getKey());
+                    out.writeInt(e.getValue()[0]);
+                    out.writeInt(e.getValue()[1]);
+                }
+            }
+            java.nio.file.Files.move(tmp, heightsFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        } catch (java.io.IOException e) {
+            heightsChanged = true;
+            com.sablednah.diorama.Diorama.LOGGER.warn("Diorama: could not save {}: {}", heightsFile, e.toString());
+        }
     }
 
     /** The folder, and the URL segment, for a view by day or night. */
@@ -127,10 +307,19 @@ public final class MapRenderer {
 
     public void markSurveyed() {
         surveyed = true;
+        saveHeights();
     }
 
     public int renderedTiles() {
         return rendered.get();
+    }
+
+    /** Record a chunk's heights for the survey, marking nothing: its tiles are already drawn. */
+    public void recordChunk(int cx, int cz, ChunkSnap snap) {
+        int low = snap.lowestTop() - 1, high = snap.topY();
+        extents.put(ChunkPos.pack(cx, cz), new int[] {low, high});
+        heightsChanged = true;
+        cover(cx, cz, low, high, null);
     }
 
     /** Record a chunk's current contents and mark every tile it can affect. */
@@ -143,6 +332,15 @@ public final class MapRenderer {
             low = Math.min(low, previous[0]);
             high = Math.max(high, previous[1]);
         }
+        heightsChanged = true;
+        cover(cx, cz, low, high, (l, tile) -> l.dirty.add(tile));
+    }
+
+    /**
+     * Raise the tops of every tile a chunk spanning {@code low..high} can affect, and hand each
+     * one to {@code each} (null: nothing more).
+     */
+    private void cover(int cx, int cz, int low, int high, java.util.function.@org.jspecify.annotations.Nullable BiConsumer<Layer, Long> each) {
         if (high == Integer.MIN_VALUE) {
             return;
         }
@@ -164,7 +362,9 @@ public final class MapRenderer {
                 for (int tx = Math.floorDiv(sxMin, t); tx <= Math.floorDiv(sxMax, t); tx++) {
                     long tile = pack(tx, ty);
                     l.tops.merge(tile, high, Math::max);
-                    l.dirty.add(tile);
+                    if (each != null) {
+                        each.accept(l, tile);
+                    }
                 }
             }
         }
@@ -177,6 +377,9 @@ public final class MapRenderer {
     public void renderDirty(ExecutorService pool, ThreadLocal<IsoRenderer> renderers) {
         for (Layer l : layers.values()) {
             renderDirty(l, pool, renderers);
+        }
+        if (heightsChanged && surveyed && System.nanoTime() - heightsSaved > 60_000_000_000L) {
+            saveHeights();
         }
     }
 

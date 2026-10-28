@@ -275,6 +275,16 @@ Chrome's window frame, not missing tiles. Links are `#world/view/x/z/zoom`, x/z 
   scanned, and a world that has been surveyed once never full-renders again on start, so the
   damage stayed until `/diorama render`. `get()` now scans on first use. The self-test asks a fresh,
   never-scanned store for the spawn chunk.
+- ⚠ **A restart used to forget two things, and a big map paid for both.** Each tile's ray-start
+  height lived only in memory, so after a restart every ray started at the build limit and a tile
+  read more chunks than the cache holds: 4 tiles a second instead of 23 on a 65,536-chunk CityWorld
+  map. And the queue of tiles waiting to be drawn lived only in memory, so a crash or restart threw
+  it away — 38,000 tiles of freshly generated land, and a night view a quarter drawn, that nothing
+  would ever have filled. Now `heights.bin` (each chunk's height span) and `pending.bin` (the
+  queue) sit beside the tiles; a map drawn before them is surveyed once on start (41,685 chunks in
+  37 s, nothing redrawn); and every start queues any tile a known chunk should have drawn that has
+  no file. Tiles that drew empty at the world's edge come back through that check each start, by
+  design — few, and cheap.
 - ⚠ **A disk read must not overwrite a fresher save.** `ChunkStore.get` read a chunk from its
   region file while the save of the same chunk arrived through `accept()`, then `put` the older
   copy over it — often the half-generated one, which reads as "no chunk". The tile drew empty and
@@ -298,5 +308,3 @@ Chrome's window frame, not missing tiles. Links are `#world/view/x/z/zoom`, x/z 
 
 - A top-down flat view for very low zooms.
 - Quads that extend outside their voxel (rare) are clipped to it.
-- Tile tops are not persisted, so after a restart live redraws start rays at the world ceiling and
-  touch more chunks than the cache holds. Slow on a big world, not wrong.

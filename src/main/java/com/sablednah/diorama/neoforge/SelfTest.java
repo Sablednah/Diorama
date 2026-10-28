@@ -59,6 +59,7 @@ final class SelfTest {
         regionsTrace(service);
         pickFindsTheGround(service);
         roofIsCutAway(service);
+        heightsSurviveARestart(service);
         integrationsLinked();
         factionsEndToEnd(service);
         cityWorldAnswers(service);
@@ -143,6 +144,46 @@ final class SelfTest {
             maxY = Math.max(maxY, q.o()[1] + q.e3()[1]);
         }
         check(Math.abs(maxY - 0.5f) < 1e-4f, "a bottom slab should top out at half a block, got " + maxY);
+    }
+
+    /**
+     * A chunk's heights, saved and read back by a second renderer over the same folder — which is
+     * what a restart is. Without them every restart began unsurveyed and redraws crawled.
+     */
+    private static void heightsSurviveARestart(DioramaService service) {
+        MapRenderer map = service.maps().get(service.server().overworld().dimension());
+        if (map == null) {
+            return;
+        }
+        ServerLevel overworld = map.store().level();
+        BlockPos spawn = overworld.getRespawnData().globalPos().pos();
+        ChunkSnap snap = map.store().get(spawn.getX() >> 4, spawn.getZ() >> 4);
+        if (snap == null) {
+            Diorama.LOGGER.info("Diorama self-test: spawn chunk not on disk yet; heights check skipped");
+            return;
+        }
+        java.nio.file.Path root;
+        try {
+            root = java.nio.file.Files.createTempDirectory("diorama-heights");
+        } catch (java.io.IOException e) {
+            check(false, "heights: no scratch folder (" + e + ")");
+            return;
+        }
+        int ppb = DioramaConfig.PIXELS_PER_BLOCK.get();
+        var views = java.util.EnumSet.allOf(View.class);
+        MapRenderer first = new MapRenderer(map.store(), root, views, false, ppb);
+        check(first.loadedHeights() == 0, "heights: a new folder already had heights");
+        first.recordChunk(spawn.getX() >> 4, spawn.getZ() >> 4, snap);
+        first.markSurveyed();
+        MapRenderer second = new MapRenderer(map.store(), root, views, false, ppb);
+        check(second.loadedHeights() == 1, "heights: saved 1 chunk, read back " + second.loadedHeights());
+        // The scratch folder holds no tiles, so every tile that chunk touches is owed a drawing.
+        check(second.queueMissing() > 0, "heights: a known chunk with no tiles queued nothing to draw");
+        try (var files = java.nio.file.Files.walk(root)) {
+            files.sorted(java.util.Comparator.reverseOrder()).forEach(f -> f.toFile().delete());
+        } catch (java.io.IOException ignored) {
+            // a temp folder left behind is the OS's to clear
+        }
     }
 
     /** Read the chunk at spawn through the real store and draw the tile above it. */

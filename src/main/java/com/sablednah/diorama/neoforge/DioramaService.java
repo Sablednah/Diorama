@@ -147,6 +147,9 @@ public final class DioramaService {
         }
         s.coordinator.shutdownNow();
         s.pool.shutdownNow();
+        for (MapRenderer map : s.maps.values()) {
+            map.saveHeights();
+        }
     }
 
     private void startWeb() {
@@ -189,6 +192,11 @@ public final class DioramaService {
                 built.put(level.dimension(), new MapRenderer(new ChunkStore(level, capacity, night), tileRoot(level.dimension()), views, night, ppb));
             }
             maps = java.util.Collections.unmodifiableMap(built);
+            built.forEach((dim, map) -> {
+                if (map.loadedHeights() > 0) {
+                    Diorama.LOGGER.info("Diorama: {} — heights of {} chunks from disk", dim.identifier(), map.loadedHeights());
+                }
+            });
             state = State.READY;
             Diorama.LOGGER.info("Diorama: ready — {} asset source(s), {} dimension(s)", assets.sources().size(), maps.size());
 
@@ -201,6 +209,14 @@ public final class DioramaService {
             for (var e : maps.entrySet()) {
                 if (e.getValue().missingTiles()) {
                     renderAll(e.getKey());
+                } else if (e.getValue().loadedHeights() == 0) {
+                    // Drawn before heights were kept: learn them once, without redrawing anything.
+                    renderAll(e.getKey(), false);
+                } else {
+                    int missing = e.getValue().queueMissing();
+                    if (missing > 0) {
+                        Diorama.LOGGER.info("Diorama: {} — {} tile(s) never drawn, queued", e.getKey().identifier(), missing);
+                    }
                 }
             }
             int every = DioramaConfig.UPDATE_SECONDS.get();
@@ -363,6 +379,11 @@ public final class DioramaService {
     }
 
     private void renderAll(ResourceKey<Level> key) {
+        renderAll(key, true);
+    }
+
+    /** With {@code draw} false, only a survey: every chunk's heights recorded, no tile redrawn. */
+    private void renderAll(ResourceKey<Level> key, boolean draw) {
         MapRenderer map = maps.get(key);
         if (map == null) {
             return;
@@ -371,7 +392,7 @@ public final class DioramaService {
         long start = System.nanoTime();
         int chunks = map.store().scan();
         fullRender = name + ": reading " + chunks + " chunks";
-        Diorama.LOGGER.info("Diorama: full render of {} — {} chunks", name, chunks);
+        Diorama.LOGGER.info(draw ? "Diorama: full render of {} — {} chunks" : "Diorama: surveying {} — {} chunks", name, chunks);
 
         List<Future<?>> reads = new ArrayList<>(chunks);
         AtomicInteger done = new AtomicInteger();
@@ -380,7 +401,11 @@ public final class DioramaService {
             reads.add(pool.submit(() -> {
                 ChunkSnap snap = map.store().get(cx, cz);
                 if (snap != null) {
-                    map.markChunk(cx, cz, snap);
+                    if (draw) {
+                        map.markChunk(cx, cz, snap);
+                    } else {
+                        map.recordChunk(cx, cz, snap);
+                    }
                 }
                 done.incrementAndGet();
             }));
@@ -396,6 +421,11 @@ public final class DioramaService {
             }
         }
         map.markSurveyed();
+        if (!draw) {
+            fullRender = null;
+            Diorama.LOGGER.info("Diorama: {} surveyed in {}s", name, (System.nanoTime() - start) / 1_000_000_000L);
+            return;
+        }
         fullRender = name + ": drawing " + map.pendingTiles() + " tiles";
         int before = map.renderedTiles();
         map.renderDirty(pool, renderers);
