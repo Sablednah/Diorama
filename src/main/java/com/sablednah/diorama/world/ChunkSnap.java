@@ -50,6 +50,13 @@ public final class ChunkSnap {
      * topmost air under the cut. Everything from here up is lifted off. {@code null} without a roof.
      */
     private final int @Nullable [] roofBase;
+    /**
+     * Per column ({@code z << 4 | x}), one above its highest drawn block ({@link #columnTop}).
+     * Everything at or above it is air, or roof that is not drawn, so a ray can pass it without
+     * asking the paletted storage — which, for the open air above a city, it otherwise did block
+     * by block and was the largest drawing cost left in the profile.
+     */
+    private final int[] tops = new int[256];
 
     private ChunkSnap(int minSectionY, @Nullable LevelChunkSection[] sections,
                       @Nullable DataLayer @Nullable [] sky, @Nullable DataLayer @Nullable [] blockLight, int ceiling) {
@@ -71,6 +78,7 @@ public final class ChunkSnap {
         for (int x = 0; x < 16; x++) {
             for (int z = 0; z < 16; z++) {
                 int t = columnTop(x, z);
+                tops[z << 4 | x] = t;
                 top = Math.max(top, t);
                 if (t != Integer.MIN_VALUE) {
                     low = Math.min(low, t);
@@ -245,7 +253,12 @@ public final class ChunkSnap {
      * this chunk) — the height you would stand at. {@code Integer.MIN_VALUE} for an empty column.
      */
     public int surface(int x, int z) {
-        return columnTop(x & 15, z & 15);
+        return tops[(z & 15) << 4 | (x & 15)];
+    }
+
+    /** Whether world {@code x, y, z} (in this chunk) is above everything drawn in its column: air, or lifted-off roof. */
+    public boolean clear(int x, int y, int z) {
+        return y >= tops[(z & 15) << 4 | (x & 15)];
     }
 
     private int columnTop(int x, int z) {

@@ -1,7 +1,5 @@
 package com.sablednah.diorama.render;
 
-import java.util.HashMap;
-import java.util.Map;
 
 import com.sablednah.diorama.asset.Assets;
 import com.sablednah.diorama.model.BlockModels;
@@ -53,7 +51,16 @@ public final class IsoRenderer {
     private final int pixelsPerBlock;
 
     private final float[] hitAB = new float[2];
-    private final Map<Long, ChunkSnap> chunks = new HashMap<>();
+    /**
+     * The chunks this tile has asked for, open-addressed on the packed position: a {@code HashMap}
+     * boxed a {@code Long} on every chunk crossing, and hashing it was a visible slice of the
+     * profile. A tile reaches a few hundred chunks at most; the table is cleared per tile.
+     */
+    private static final int SLOTS = 2048;
+    private final long[] chunkKeys = new long[SLOTS];
+    private final @Nullable ChunkSnap[] chunkVals = new ChunkSnap[SLOTS];
+    private final boolean[] chunkUsed = new boolean[SLOTS];
+    private int chunkCount;
     private @Nullable ChunkStore store;
     private int lastCx, lastCz;
     private @Nullable ChunkSnap lastSnap;
@@ -80,7 +87,9 @@ public final class IsoRenderer {
         this.night = night;
         this.dx = view.rayX();
         this.dz = view.rayZ();
-        chunks.clear();
+        java.util.Arrays.fill(chunkUsed, false);
+        java.util.Arrays.fill(chunkVals, null);
+        chunkCount = 0;
         lastValid = false;
         int[] out = new int[TILE * TILE];
         boolean any = false;
@@ -141,6 +150,12 @@ public final class IsoRenderer {
                 continue;
             }
 
+            if (chunk.clear(vx, vy, vz)) {
+                // Above everything in this column: air (or roof), known without a block lookup.
+                inWater = false;
+                t = tExit + 1e-5f;
+                continue;
+            }
             BlockState state = chunk.block(vx, vy, vz);
             if (state.isAir()) {
                 // Most steps. Air holds no fluid and no faces: nothing to look up at all.
@@ -286,10 +301,24 @@ public final class IsoRenderer {
             return lastSnap;
         }
         long key = ChunkPos.pack(cx, cz);
-        ChunkSnap snap = chunks.get(key);
-        if (snap == null && !chunks.containsKey(key)) {
-            snap = store.get(cx, cz);
-            chunks.put(key, snap);
+        int slot = (int) (key ^ (key >>> 29) ^ (key >>> 13)) * 0x9E3779B1 >>> 21; // top 11 bits: 0..2047
+        ChunkSnap snap;
+        while (true) {
+            if (!chunkUsed[slot]) {
+                snap = store.get(cx, cz);
+                if (chunkCount < SLOTS * 3 / 4) {
+                    chunkUsed[slot] = true;
+                    chunkKeys[slot] = key;
+                    chunkVals[slot] = snap;
+                    chunkCount++;
+                }
+                break;
+            }
+            if (chunkKeys[slot] == key) {
+                snap = chunkVals[slot];
+                break;
+            }
+            slot = (slot + 1) & (SLOTS - 1);
         }
         lastCx = cx;
         lastCz = cz;
