@@ -307,6 +307,14 @@ Chrome's window frame, not missing tiles. Links are `#world/view/x/z/zoom`, x/z 
   four children back off disk moments after they were drawn. Encoding in memory and handing each
   level's pixels up the chain took a city area from 24 to 40 tiles/s; more threads add little
   (18 for 11 gave 8%). Time one area with `/diorama render <dim> <x> <z> <radius>`, not a map.
+- **Speed is settled at "good enough", by the owner's call (2026-10-29).** A city area went from
+  24 to 51 tiles/s, and skipping the air above each column's top got the last 28%, pixel-identical.
+  What remains is ~40% block reads below a column's top (glass towers, canopies) and ~40% file
+  create/rename, mostly drvfs. **Do not flatten the paletted sections into plain arrays:** it is the
+  obvious next step from the profile, worth perhaps 20–30%, and costs ~250 MB more at the default
+  cache — and RAM is what server hosting charges for. The shape that matters is one long first
+  render of an existing map, then live edits, which a few tiles a save keeps up with easily. An
+  owner who wants speed has `pixelsPerBlock = 16`: about four times faster, a quarter of the disk.
 - ⚠ **A stale zoom tile is worse than a missing one.** A pass writes level 0, then shrinks it
   into the zoom levels; stopped between the two, the zoom tiles were left either missing or built
   from children that did not exist yet — a black ring round a 4 km map at every zoom but the
