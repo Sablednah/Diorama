@@ -431,7 +431,16 @@ public final class MapRenderer {
     }
 
     /** Tiles one view draws per pass before the next view, and the next world, get a turn. */
-    private static final int BATCH = 512;
+    private static final int BATCH = Integer.getInteger("diorama.batch", 512);
+
+    /** Wall-clock spent drawing tiles and building zoom levels, and zoom tiles built, for the timing line. */
+    private final java.util.concurrent.atomic.AtomicLong drawNanos = new java.util.concurrent.atomic.AtomicLong(),
+            zoomNanos = new java.util.concurrent.atomic.AtomicLong(), zoomBuilt = new java.util.concurrent.atomic.AtomicLong();
+
+    /** {draw ns, zoom ns, zoom tiles built} since the last call, and resets them. */
+    public long[] takeTimings() {
+        return new long[] {drawNanos.getAndSet(0), zoomNanos.getAndSet(0), zoomBuilt.getAndSet(0)};
+    }
 
     private void renderDirty(Layer layer, ExecutorService pool, ThreadLocal<IsoRenderer> renderers) {
         Set<Long> dirty = layer.dirty;
@@ -457,6 +466,9 @@ public final class MapRenderer {
 
         int bottom = store.level().getMinY();
         int ceiling = store.level().getMaxY() + 1;
+        long t0 = System.nanoTime();
+        // What each tile drew, handed to the zoom levels so they need not read it back.
+        Map<Long, int[]> drawn = new java.util.concurrent.ConcurrentHashMap<>();
         List<Future<?>> jobs = new ArrayList<>(batch.size());
         for (long key : batch) {
             // A roofed world starts every ray at its cut: rays then pass through the roof's rock
@@ -466,7 +478,9 @@ public final class MapRenderer {
             jobs.add(pool.submit(() -> {
                 int tx = unpackX(key), ty = unpackY(key);
                 try {
-                    tiles.write(0, tx, ty, renderers.get().render(store, layer.view, layer.night, tx, ty, top, bottom));
+                    int[] argb = renderers.get().render(store, layer.view, layer.night, tx, ty, top, bottom);
+                    tiles.write(0, tx, ty, argb);
+                    drawn.put(key, argb == null ? TileStore.EMPTY : argb);
                     rendered.incrementAndGet();
                 } catch (IOException | RuntimeException ex) {
                     Diorama.LOGGER.warn("Diorama: tile {},{} failed: {}", tx, ty, ex.toString());
@@ -474,27 +488,34 @@ public final class MapRenderer {
             }));
         }
         await(jobs);
+        long t1 = System.nanoTime();
+        drawNanos.addAndGet(t1 - t0);
 
         Set<Long> level = new HashSet<>(batch);
+        Map<Long, int[]> below = drawn;
         for (int z = 1; z <= TileStore.ZOOM_OUT_LEVELS; z++) {
             Set<Long> parents = new HashSet<>();
             for (long k : level) {
                 parents.add(pack(Math.floorDiv(unpackX(k), 2), Math.floorDiv(unpackY(k), 2)));
             }
             int lz = z;
+            Map<Long, int[]> known = below, made = new java.util.concurrent.ConcurrentHashMap<>();
             List<Future<?>> up = new ArrayList<>(parents.size());
             for (long k : parents) {
                 up.add(pool.submit(() -> {
                     try {
-                        tiles.downsample(lz, unpackX(k), unpackY(k));
+                        tiles.downsample(lz, unpackX(k), unpackY(k), known, made);
                     } catch (IOException | RuntimeException ex) {
                         Diorama.LOGGER.warn("Diorama: zoom tile {}/{},{} failed: {}", lz, unpackX(k), unpackY(k), ex.toString());
                     }
                 }));
             }
             await(up);
+            zoomBuilt.addAndGet(parents.size());
             level = parents;
+            below = made;
         }
+        zoomNanos.addAndGet(System.nanoTime() - t1);
         // Only now: a tile drawn but not yet shrunk into the zoom levels is still owed work, and
         // a restart between the two left holes in every zoomed-out view of it. Interrupted (the
         // server stopping), the batch stays owed and is saved with the queue.

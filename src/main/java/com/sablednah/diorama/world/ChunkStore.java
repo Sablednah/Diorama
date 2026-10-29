@@ -49,6 +49,15 @@ public final class ChunkStore {
     private final Set<Long> existing = ConcurrentHashMap.newKeySet();
     private final Map<Long, Object> cache;
 
+    /** Reads answered from memory and from disk, for the timing line a full render logs. */
+    private final java.util.concurrent.atomic.AtomicLong hits = new java.util.concurrent.atomic.AtomicLong(),
+            reads = new java.util.concurrent.atomic.AtomicLong();
+
+    /** {hits, disk reads} since the last call, and resets them. */
+    public long[] takeCounts() {
+        return new long[] {hits.getAndSet(0), reads.getAndSet(0)};
+    }
+
     public ChunkStore(ServerLevel level, int capacity, boolean keepLight) {
         this.level = level;
         this.keepLight = keepLight;
@@ -98,6 +107,7 @@ public final class ChunkStore {
         long key = ChunkPos.pack(cx, cz);
         Object held = cache.get(key);
         if (held != null) {
+            hits.incrementAndGet();
             return held == NONE ? null : (ChunkSnap) held;
         }
         if (!existing.contains(key)) {
@@ -112,6 +122,7 @@ public final class ChunkStore {
                 return null;
             }
         }
+        reads.incrementAndGet();
         ChunkSnap snap = load(new ChunkPos(cx, cz));
         // putIfAbsent, never put: while this read was on disk, a fresher save may have arrived
         // through accept(). Overwriting it with the older disk copy — often the half-generated

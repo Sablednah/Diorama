@@ -58,6 +58,10 @@ neoForge {
             if (project.hasProperty('selftest')) {
                 systemProperty 'diorama.selftest', 'true'
             }
+            // -Pdiorama.batch=N: tiles per view per pass, for timing the renderer.
+            if (project.hasProperty('diorama.batch')) {
+                systemProperty 'diorama.batch', project.property('diorama.batch')
+            }
         }
 
         configureEach {

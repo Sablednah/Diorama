@@ -299,6 +299,14 @@ Chrome's window frame, not missing tiles. Links are `#world/view/x/z/zoom`, x/z 
   being drawn count as waiting and are saved with the queue, `stop()` takes in the last saves
   before writing `heights.bin`, and every start reads any chunk on disk with no recorded heights
   (`learnUnknown`) — so a crash costs a redraw, never a hole.
+- ⚠ **Measure a speed question; the obvious suspects were both wrong.** A 4 km redraw ran at 16
+  tiles/s and the guesses were the chunk cache and PNG compression. The timing line a full render
+  now logs showed the cache going to disk about once per chunk, and lighter compression came out
+  *slower*. Thread dumps found the real costs: ImageIO given a file writes a PNG in many small
+  pieces, each a system call (a Windows round trip on drvfs), and every zoom tile decoded its
+  four children back off disk moments after they were drawn. Encoding in memory and handing each
+  level's pixels up the chain took a city area from 24 to 40 tiles/s; more threads add little
+  (18 for 11 gave 8%). Time one area with `/diorama render <dim> <x> <z> <radius>`, not a map.
 - ⚠ **A stale zoom tile is worse than a missing one.** A pass writes level 0, then shrinks it
   into the zoom levels; stopped between the two, the zoom tiles were left either missing or built
   from children that did not exist yet — a black ring round a 4 km map at every zoom but the

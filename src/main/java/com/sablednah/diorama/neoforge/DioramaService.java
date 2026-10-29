@@ -399,11 +399,20 @@ public final class DioramaService {
      * queues behind (and holds up) live updates rather than racing them.
      */
     public Future<?> requestFullRender(ResourceKey<Level> level) {
+        return requestFullRender(level, null);
+    }
+
+    /**
+     * As {@link #requestFullRender(ResourceKey)}, but only the chunks within {@code radius}
+     * chunks of block {@code x, z} when {@code area} is {x, z, radius}: for redrawing one place,
+     * and for timing the renderer in minutes rather than a whole map's hours.
+     */
+    public Future<?> requestFullRender(ResourceKey<Level> level, int @org.jspecify.annotations.Nullable [] area) {
         fullRender = level.identifier() + ": queued — saving the world first";
         return coordinator.submit(() -> {
             try {
                 saveWorld();
-                renderAll(level);
+                renderAll(level, true, area);
             } catch (java.util.concurrent.RejectedExecutionException e) {
                 // Stopping: see update().
             }
@@ -411,11 +420,15 @@ public final class DioramaService {
     }
 
     private void renderAll(ResourceKey<Level> key) {
-        renderAll(key, true);
+        renderAll(key, true, null);
+    }
+
+    private void renderAll(ResourceKey<Level> key, boolean draw) {
+        renderAll(key, draw, null);
     }
 
     /** With {@code draw} false, only a survey: every chunk's heights recorded, no tile redrawn. */
-    private void renderAll(ResourceKey<Level> key, boolean draw) {
+    private void renderAll(ResourceKey<Level> key, boolean draw, int @org.jspecify.annotations.Nullable [] area) {
         MapRenderer map = maps.get(key);
         if (map == null) {
             return;
@@ -430,6 +443,9 @@ public final class DioramaService {
         AtomicInteger done = new AtomicInteger();
         for (long packed : map.store().existing()) {
             int cx = ChunkPos.getX(packed), cz = ChunkPos.getZ(packed);
+            if (area != null && (Math.abs(cx - (area[0] >> 4)) > area[2] || Math.abs(cz - (area[1] >> 4)) > area[2])) {
+                continue;
+            }
             reads.add(pool.submit(() -> {
                 ChunkSnap snap = map.store().get(cx, cz);
                 if (snap != null) {
@@ -460,14 +476,24 @@ public final class DioramaService {
         }
         fullRender = name + ": drawing " + map.pendingTiles() + " tiles";
         int before = map.renderedTiles();
+        long drawStart = System.nanoTime();
+        map.takeTimings();
+        map.store().takeCounts();
         // Each pass draws a capped share per view; a full render keeps going until it is done.
         while (map.pendingTiles() > 0 && !Thread.currentThread().isInterrupted()) {
             map.renderDirty(pool, renderers);
             fullRender = name + ": drawing, " + map.pendingTiles() + " tiles to go";
         }
         fullRender = null;
-        Diorama.LOGGER.info("Diorama: {} drawn — {} tiles in {}s", name, map.renderedTiles() - before,
-                (System.nanoTime() - start) / 1_000_000_000L);
+        int drawn = map.renderedTiles() - before;
+        double secs = (System.nanoTime() - drawStart) / 1e9;
+        long[] t = map.takeTimings(), c = map.store().takeCounts();
+        Diorama.LOGGER.info("Diorama: {} drawn — {} tiles in {}s", name, drawn, (System.nanoTime() - start) / 1_000_000_000L);
+        // The line a speed question starts from: where the time went, and how often the chunk
+        // cache had to go to disk for something it had held and dropped.
+        Diorama.LOGGER.info("Diorama: {} timing — {} tiles/s; drawing {}s, zoom levels {}s ({} built); chunks {} from memory, {} from disk ({} cache)",
+                name, String.format("%.1f", drawn / Math.max(secs, 0.001)), t[0] / 1_000_000_000L, t[1] / 1_000_000_000L, t[2],
+                c[0], c[1], com.sablednah.diorama.DioramaConfig.CHUNK_CACHE.get());
     }
 
     /** Once a second, from the server thread. */

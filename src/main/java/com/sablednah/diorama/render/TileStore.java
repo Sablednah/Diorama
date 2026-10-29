@@ -47,7 +47,12 @@ public final class TileStore {
         BufferedImage image = new BufferedImage(IsoRenderer.TILE, IsoRenderer.TILE, BufferedImage.TYPE_INT_ARGB);
         image.setRGB(0, 0, IsoRenderer.TILE, IsoRenderer.TILE, argb, 0, IsoRenderer.TILE);
         Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-        ImageIO.write(image, "png", tmp.toFile());
+        // Encoded in memory, written in one go. Given a file, ImageIO writes the PNG in many small
+        // pieces, each its own system call — through drvfs on the dev machine, a round trip to
+        // Windows apiece — and that, not the compression, was 40% of a redraw.
+        var bytes = new java.io.ByteArrayOutputStream(64 * 1024);
+        ImageIO.write(image, "png", bytes);
+        Files.write(tmp, bytes.toByteArray());
         Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
     }
 
@@ -57,7 +62,7 @@ public final class TileStore {
             return null;
         }
         try {
-            BufferedImage image = ImageIO.read(file.toFile());
+            BufferedImage image = ImageIO.read(new java.io.ByteArrayInputStream(Files.readAllBytes(file)));
             if (image == null) {
                 return null;
             }
@@ -67,14 +72,36 @@ public final class TileStore {
         }
     }
 
+    /** Marks a tile known to be empty in a {@code known} map, which cannot hold null. */
+    public static final int[] EMPTY = new int[0];
+
     /** Rebuild one zoomed-out tile from its four children, averaging in premultiplied alpha. */
     public void downsample(int level, int tx, int ty) throws IOException {
+        downsample(level, tx, ty, null, null);
+    }
+
+    /**
+     * As {@link #downsample(int, int, int)}, taking children from {@code known} (the level below,
+     * just written; {@link #EMPTY} for one that is empty) before the disk, and putting the result
+     * in {@code made} for the level above. Re-reading them meant a PNG decode per child, through
+     * drvfs on the dev machine: the zoom levels cost 43% of a redraw, and more per tile than
+     * drawing the tiles they were made from.
+     */
+    public void downsample(int level, int tx, int ty, java.util.@Nullable Map<Long, int[]> known,
+            java.util.@Nullable Map<Long, int[]> made) throws IOException {
         int t = IsoRenderer.TILE;
         int half = t / 2;
         int[] out = new int[t * t];
         boolean any = false;
         for (int q = 0; q < 4; q++) {
-            int[] child = read(level - 1, tx * 2 + (q & 1), ty * 2 + (q >> 1));
+            int cx = tx * 2 + (q & 1), cy = ty * 2 + (q >> 1);
+            int[] child = known == null ? null : known.get(MapRenderer.pack(cx, cy));
+            if (child == EMPTY) {
+                continue;
+            }
+            if (child == null) {
+                child = read(level - 1, cx, cy);
+            }
             if (child == null) {
                 continue;
             }
@@ -89,6 +116,9 @@ public final class TileStore {
             }
         }
         write(level, tx, ty, any ? out : null);
+        if (made != null) {
+            made.put(MapRenderer.pack(tx, ty), any ? out : EMPTY);
+        }
     }
 
     private static int average(int c0, int c1, int c2, int c3) {

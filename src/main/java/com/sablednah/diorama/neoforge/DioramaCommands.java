@@ -4,6 +4,7 @@ import java.net.URI;
 import java.util.List;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.sablednah.diorama.render.MapRenderer;
@@ -38,7 +39,13 @@ public final class DioramaCommands {
                         .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                         .executes(ctx -> render(ctx, ctx.getSource().getLevel()))
                         .then(Commands.argument("dimension", DimensionArgument.dimension())
-                                .executes(ctx -> render(ctx, DimensionArgument.getDimension(ctx, "dimension"))))));
+                                .executes(ctx -> render(ctx, DimensionArgument.getDimension(ctx, "dimension")))
+                                .then(Commands.argument("x", IntegerArgumentType.integer())
+                                        .then(Commands.argument("z", IntegerArgumentType.integer())
+                                                .then(Commands.argument("radius", IntegerArgumentType.integer(1, 256))
+                                                        .executes(ctx -> render(ctx, DimensionArgument.getDimension(ctx, "dimension"),
+                                                                new int[] {IntegerArgumentType.getInteger(ctx, "x"), IntegerArgumentType.getInteger(ctx, "z"),
+                                                                        IntegerArgumentType.getInteger(ctx, "radius")}))))))));
     }
 
     /** The clickable line. A dedicated server with no public URL configured cannot know its own address. */
@@ -79,12 +86,17 @@ public final class DioramaCommands {
     }
 
     private static int render(CommandContext<CommandSourceStack> ctx, ServerLevel level) throws CommandSyntaxException {
+        return render(ctx, level, null);
+    }
+
+    private static int render(CommandContext<CommandSourceStack> ctx, ServerLevel level, int @org.jspecify.annotations.Nullable [] area)
+            throws CommandSyntaxException {
         DioramaService s = DioramaService.current();
         if (s == null || s.state() != DioramaService.State.READY) {
             ctx.getSource().sendFailure(Lang.get("render.not_ready", "detail", s == null ? "." : ": " + s.stateDetail()));
             return 0;
         }
-        s.requestFullRender(level.dimension());
+        s.requestFullRender(level.dimension(), area);
         ctx.getSource().sendSuccess(() -> Lang.get("render.started", "world", level.dimension().identifier()), true);
         return 1;
     }
