@@ -312,7 +312,9 @@ Chrome's window frame, not missing tiles. Links are `#world/view/x/z/zoom`, x/z 
   What remains is ~40% block reads below a column's top (glass towers, canopies) and ~40% file
   create/rename, mostly drvfs. **Do not flatten the paletted sections into plain arrays:** it is the
   obvious next step from the profile, worth perhaps 20–30%, and costs ~250 MB more at the default
-  cache — and RAM is what server hosting charges for. The shape that matters is one long first
+  cache — and RAM is what server hosting charges for. **Not by default, that is:** the owner would
+  take it later as an opt-in setting ("faster, uses a lot more memory") for those who want it, in a
+  release after people are actually using the mod. Off unless set, and the comment says the cost. The shape that matters is one long first
   render of an existing map, then live edits, which a few tiles a save keeps up with easily. An
   owner who wants speed has `pixelsPerBlock = 16`: about four times faster, a quarter of the disk.
 - ⚠ **A stale zoom tile is worse than a missing one.** A pass writes level 0, then shrinks it
