@@ -38,7 +38,7 @@ import org.jspecify.annotations.Nullable;
  * elements, and {@link #bakeFace} follows {@code FaceBakery.bakeQuad} step for step — the same
  * vertex order, the same default UVs, the same element rotation and rescale, the same variant
  * rotation about the block centre and the same uvlock maths. The rotation helpers it leans on
- * ({@link BlockMath}, {@link Quadrant}, {@link Transformation}) are common code on 26.2, so the
+ * ({@link BlockMath}, {@link Quadrant}, {@link Transformation}) are common code on 26.x, so the
  * server reaches the very methods the client calls.</p>
  *
  * <p>Results are cached per state. A state that resolves to nothing becomes {@link Baked#EMPTY},
@@ -345,7 +345,12 @@ public final class BlockModels {
     private void bakeElement(JsonObject element, ResolvedModel model, Transformation rotation, boolean uvlock, List<Quad> out) {
         Vector3f from = vec(element.getAsJsonArray("from"));
         Vector3f to = vec(element.getAsJsonArray("to"));
-        boolean shade = !element.has("shade") || element.get("shade").getAsBoolean();
+        // 26.3 replaced the element's "shade": false with "shade_direction_override": <direction>, and
+        // the client no longer reads "shade" at all: a face is lit as if it faced the override
+        // (BlockModelLighter.getDirectionalBrightness), not by its own direction. The override is
+        // used as written, never turned with the variant, exactly as FaceBakery passes it through.
+        Direction shadeOverride = element.has("shade_direction_override")
+                ? Direction.byName(element.get("shade_direction_override").getAsString()) : null;
 
         Vector3f rotOrigin = null;
         Matrix4f rotMatrix = null;
@@ -387,7 +392,7 @@ public final class BlockModels {
             int uvRotation = face.has("rotation") ? quadrant(face.get("rotation").getAsInt()).shift : 0;
             int tint = face.has("tintindex") ? face.get("tintindex").getAsInt() : -1;
             Texture tex = texture(model, face.has("texture") ? face.get("texture").getAsString() : "#missing");
-            Quad q = bakeFace(from, to, uvs, uvRotation, facing, rotation, uvlock, rotOrigin, rotMatrix, tex, tint, shade);
+            Quad q = bakeFace(from, to, uvs, uvRotation, facing, rotation, uvlock, rotOrigin, rotMatrix, tex, tint, shadeOverride);
             if (q != null) {
                 out.add(q);
             }
@@ -429,7 +434,7 @@ public final class BlockModels {
     private static @Nullable Quad bakeFace(Vector3f from, Vector3f to, float[] uvs, int uvShift, Direction facing,
                                            Transformation rotation, boolean uvlock,
                                            @Nullable Vector3f rotOrigin, @Nullable Matrix4f rotMatrix,
-                                           Texture tex, int tint, boolean shade) {
+                                           Texture tex, int tint, @Nullable Direction shadeOverride) {
         float[] ext = {from.x(), from.y(), from.z(), to.x(), to.y(), to.z()};
         int[][] info = FACE_INFO[facing.ordinal()];
 
@@ -480,7 +485,7 @@ public final class BlockModels {
                 new float[] {e3.x, e3.y, e3.z},
                 new float[] {n.x, n.y, n.z},
                 new float[] {uv[0], uv[1], uv[2], uv[3], uv[6], uv[7]},
-                tex, tint, shade ? SHADE_BY_DIRECTION[lit.ordinal()] : 1f);
+                tex, tint, SHADE_BY_DIRECTION[(shadeOverride != null ? shadeOverride : lit).ordinal()]);
     }
 
     /** Degrees to a quarter turn. Anything but 0/90/180/270 is a broken model; treat it as 0. */
@@ -525,7 +530,7 @@ public final class BlockModels {
             Vector3f from = new Vector3f((float) box.minX * 16f, (float) box.minY * 16f, (float) box.minZ * 16f);
             Vector3f to = new Vector3f((float) box.maxX * 16f, (float) box.maxY * 16f, (float) box.maxZ * 16f);
             for (Direction d : Direction.values()) {
-                Quad q = bakeFace(from, to, defaultFaceUV(from, to, d), 0, d, Transformation.IDENTITY, false, null, null, tex, -1, true);
+                Quad q = bakeFace(from, to, defaultFaceUV(from, to, d), 0, d, Transformation.IDENTITY, false, null, null, tex, -1, null);
                 if (q != null) {
                     out.add(q);
                 }

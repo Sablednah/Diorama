@@ -15,7 +15,7 @@ import com.sablednah.diorama.asset.Assets.Texture;
  * @param n      outward normal, {@code e1 × e3}, not normalised
  * @param uv     u0 v0 u1 v1 u3 v3, each 0..1 across the texture
  * @param tint   the model's {@code tintindex}, or -1
- * @param shade  the directional light this face gets, 0..1; 1 for {@code shade: false}
+ * @param shade  the directional light this face gets, 0..1; by the face's {@code shade_direction_override} where it has one
  */
 public record Quad(float[] o, float[] e1, float[] e3, float[] n, float[] uv, Texture texture, int tint, float shade) {
 

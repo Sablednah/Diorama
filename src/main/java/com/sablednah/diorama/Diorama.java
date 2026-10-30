@@ -31,7 +31,10 @@ public class Diorama {
     public Diorama(IEventBus modEventBus, ModContainer modContainer) {
         // Which bytes, not just which release: the line a bug report can quote.
         LOGGER.info("SableCraft Diorama {}", BuildInfo.describe());
-        modContainer.registerConfig(ModConfig.Type.COMMON, DioramaConfig.SPEC);
+        // 26.3: FML 12.0.8 renamed COMMON to LOCAL, whose default file name is not the old one. The
+        // name is passed explicitly so an existing diorama-common.toml is still the file read,
+        // rather than every setting silently resetting to its default on upgrade.
+        modContainer.registerConfig(ModConfig.Type.LOCAL, DioramaConfig.SPEC, "diorama-common.toml");
         NeoForge.EVENT_BUS.register(DioramaEvents.class);
     }
 }

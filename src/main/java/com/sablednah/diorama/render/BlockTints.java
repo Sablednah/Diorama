@@ -13,7 +13,7 @@ import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LeavesBlock;
-import net.minecraft.world.level.block.RedStoneWireBlock;
+import net.minecraft.world.level.block.RedstoneWireBlock;
 import net.minecraft.world.level.block.StemBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import org.jspecify.annotations.Nullable;
@@ -22,7 +22,7 @@ import org.jspecify.annotations.Nullable;
  * The colour a {@code tintindex} face is multiplied by — grass, leaves, water, redstone.
  *
  * <p>The client keeps this table in {@code BlockColors.createDefault}, which a dedicated server
- * does not have. This is that table, transcribed from 26.2, with the world-side colour of each
+ * does not have. This is that table, transcribed from 26.3 (unchanged from 26.2 bar the redstone class's spelling), with the world-side colour of each
  * entry (the lily pad's in-hand and in-world greens differ, and a map is the world).</p>
  *
  * <p>The biome half needs the colour maps. {@code GrassColor} and friends are common code whose
@@ -108,7 +108,7 @@ public final class BlockTints {
             case FOLIAGE -> biome == null ? -12012264 : biome.value().getFoliageColor();
             case DRY_FOLIAGE -> biome == null ? -10732494 : biome.value().getDryFoliageColor();
             case WATER -> biome == null ? 0xFF3F76E4 : biome.value().getWaterColor();
-            case REDSTONE -> RedStoneWireBlock.getColorForPower(state.getValue(RedStoneWireBlock.POWER));
+            case REDSTONE -> RedstoneWireBlock.getColorForPower(state.getValue(RedstoneWireBlock.POWER));
             case STEM -> {
                 int age = state.getValue(StemBlock.AGE);
                 yield ARGB.color(age * 32, 255 - age * 8, age * 4);
