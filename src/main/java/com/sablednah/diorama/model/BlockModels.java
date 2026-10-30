@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -98,6 +99,7 @@ public final class BlockModels {
     private final Map<String, JsonObject> blockstateFiles = new ConcurrentHashMap<>();
     private final Map<String, ResolvedModel> models = new ConcurrentHashMap<>();
     private final AtomicInteger fallbacks = new AtomicInteger();
+    private final Set<Identifier> brokenBlocks = ConcurrentHashMap.newKeySet();
 
     public BlockModels(Assets assets) {
         this.assets = assets;
@@ -135,7 +137,18 @@ public final class BlockModels {
         } catch (RuntimeException e) {
             Diorama.LOGGER.debug("Diorama: model for {} failed: {}", state, e.toString());
         }
-        return bakeFromShape(state);
+        // The fallback must not throw either: an exception here escapes get() uncached, so every
+        // tile holding the block fails, and is retried, every pass (ZARP: 463 warnings a session
+        // from AE2, Lootr and Sophisticated Storage). Draw nothing, once, and say which block.
+        try {
+            return bakeFromShape(state);
+        } catch (RuntimeException e) {
+            Identifier id = BuiltInRegistries.BLOCK.getKey(state.getBlock());
+            if (brokenBlocks.add(id)) {
+                Diorama.LOGGER.warn("Diorama: cannot draw {}, leaving it out of the map: {}", id, e.toString());
+            }
+            return Baked.EMPTY;
+        }
     }
 
     // ---------------------------------------------------------------- blockstate dispatch
@@ -264,7 +277,8 @@ public final class BlockModels {
     // ---------------------------------------------------------------- variants and models
 
     private List<Quad> bakeVariant(JsonObject variant) {
-        ResolvedModel model = model(variant.get("model").getAsString());
+        String ref = modelRef(variant);
+        ResolvedModel model = ref == null ? null : model(ref);
         if (model == null || model.elements.isEmpty()) {
             return List.of();
         }
@@ -283,6 +297,39 @@ public final class BlockModels {
             bakeElement(element, model, rotation, uvlock, out);
         }
         return out;
+    }
+
+    /**
+     * The model a variant names. Ordinarily {@code "model"}; but a variant with a {@code "type"}
+     * belongs to a mod's own block-state model loader ({@code ae2:crafting_cube},
+     * {@code lootr:custom}), which only that mod's client code can run. Its fields are the loader's
+     * own, and often name ordinary models — Lootr's barrel carries {@code "vanilla":
+     * "minecraft:block/barrel"} — so the first one that resolves to a model with geometry stands
+     * in. None, and the block is drawn from its shape like any entity-rendered block.
+     */
+    public @Nullable String modelRef(JsonObject variant) {
+        JsonElement m = variant.get("model");
+        if (m != null && m.isJsonPrimitive()) {
+            return m.getAsString();
+        }
+        if (!variant.has("type")) {
+            return null;
+        }
+        for (Map.Entry<String, JsonElement> field : variant.entrySet()) {
+            JsonElement v = field.getValue();
+            if (field.getKey().equals("type") || !v.isJsonPrimitive() || !v.getAsJsonPrimitive().isString()) {
+                continue;
+            }
+            String candidate = v.getAsString();
+            if (Identifier.tryParse(candidate) == null) {
+                continue;
+            }
+            ResolvedModel r = model(candidate);
+            if (r != null && !r.elements.isEmpty()) {
+                return candidate;
+            }
+        }
+        return null;
     }
 
     /** A model with its parent chain flattened: the nearest {@code elements}, every texture slot. */
@@ -525,6 +572,11 @@ public final class BlockModels {
         }
         Identifier id = BuiltInRegistries.BLOCK.getKey(state.getBlock());
         Texture tex = particleTexture(state, id);
+        if (tex == Texture.MISSING) {
+            // No texture and no map colour (Lootr's trophy): the checkerboard would mark a fault
+            // where there is only a block the map has no way to draw.
+            return Baked.EMPTY;
+        }
         List<Quad> out = new ArrayList<>();
         for (AABB box : boxes) {
             Vector3f from = new Vector3f((float) box.minX * 16f, (float) box.minY * 16f, (float) box.minZ * 16f);
@@ -545,13 +597,26 @@ public final class BlockModels {
         if (file != null && file.has("variants")) {
             for (Map.Entry<String, JsonElement> entry : file.getAsJsonObject("variants").entrySet()) {
                 JsonElement v = entry.getValue();
-                JsonObject variant = v.isJsonArray() ? v.getAsJsonArray().get(0).getAsJsonObject() : v.getAsJsonObject();
-                ResolvedModel m = model(variant.get("model").getAsString());
+                JsonElement first = v.isJsonArray() ? v.getAsJsonArray().get(0) : v;
+                String ref = first.isJsonObject() ? modelRef(first.getAsJsonObject()) : null;
+                ResolvedModel m = ref == null ? null : model(ref);
                 if (m != null && m.textures.containsKey("particle")) {
                     return texture(m, "#particle");
                 }
             }
         }
-        return assets.texture(id.getNamespace() + ":block/" + id.getPath());
+        Texture own = assets.texture(id.getNamespace() + ":block/" + id.getPath());
+        if (own != Texture.MISSING) {
+            return own;
+        }
+        // Nothing to name a texture by — an AE2 cable's model is built in code. The block's own map
+        // colour, flat, reads as "something is here" where the checkerboard reads as a fault.
+        int col;
+        try {
+            col = state.getMapColor(EmptyBlockGetter.INSTANCE, BlockPos.ZERO).col;
+        } catch (RuntimeException e) {
+            col = 0;
+        }
+        return col == 0 ? Texture.MISSING : new Texture(1, 1, new int[] {0xFF000000 | col});
     }
 }

@@ -43,6 +43,7 @@ public final class Assets {
 
     private final List<AssetSource> sources;
     private final Map<String, Texture> textures = new ConcurrentHashMap<>();
+    private volatile @Nullable Map<String, String> atlasAliases;
 
     public Assets(List<AssetSource> sources) {
         this.sources = List.copyOf(sources);
@@ -89,17 +90,19 @@ public final class Assets {
      * back as the magenta checkerboard, the same signal the game itself gives.
      */
     public Texture texture(String id) {
-        return textures.computeIfAbsent(id, this::loadTexture);
+        return textures.computeIfAbsent(id, k -> loadTexture(k, true));
     }
 
-    private Texture loadTexture(String id) {
+    private Texture loadTexture(String id, boolean followAlias) {
         int colon = id.indexOf(':');
         String namespace = colon < 0 ? "minecraft" : id.substring(0, colon);
         String path = colon < 0 ? id : id.substring(colon + 1);
         String file = "assets/" + namespace + "/textures/" + path + ".png";
         byte[] bytes = read(file);
         if (bytes == null) {
-            return Texture.MISSING;
+            // One hop, read directly: texture() here would re-enter the map's computeIfAbsent.
+            String target = followAlias ? atlasAliases().get(namespace + ":" + path) : null;
+            return target == null ? Texture.MISSING : loadTexture(target, false);
         }
         try {
             BufferedImage image = ImageIO.read(new ByteArrayInputStream(bytes));
@@ -116,6 +119,45 @@ public final class Assets {
             Diorama.LOGGER.warn("Diorama: unreadable texture {} ({})", file, e.getMessage());
             return Texture.MISSING;
         }
+    }
+
+    /**
+     * Sprite names the block atlas gives to textures stored elsewhere. A {@code single} source in
+     * {@code atlases/blocks.json} may rename its file — Lootr's trophy model asks for
+     * {@code lootr:block/trophy_chest}, which is {@code lootr:entity/chest/normal_opened} — so a
+     * model can name a texture that no {@code textures/} path holds. Every source contributes its
+     * own copy of that file; first source wins per sprite, as everywhere else here.
+     */
+    private Map<String, String> atlasAliases() {
+        Map<String, String> aliases = atlasAliases;
+        if (aliases != null) {
+            return aliases;
+        }
+        aliases = new java.util.HashMap<>();
+        for (AssetSource source : sources) {
+            try {
+                byte[] bytes = source.read("assets/minecraft/atlases/blocks.json");
+                if (bytes == null) {
+                    continue;
+                }
+                var root = JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject();
+                for (var e : root.getAsJsonArray("sources")) {
+                    JsonObject o = e.getAsJsonObject();
+                    String type = o.has("type") ? o.get("type").getAsString() : "";
+                    if ((type.equals("minecraft:single") || type.equals("single")) && o.has("resource") && o.has("sprite")) {
+                        aliases.putIfAbsent(qualify(o.get("sprite").getAsString()), qualify(o.get("resource").getAsString()));
+                    }
+                }
+            } catch (IOException | RuntimeException e) {
+                Diorama.LOGGER.debug("Diorama: {} has an unreadable block atlas", source.name(), e);
+            }
+        }
+        atlasAliases = aliases;
+        return aliases;
+    }
+
+    private static String qualify(String id) {
+        return id.indexOf(':') < 0 ? "minecraft:" + id : id;
     }
 
     /** An image as packed ARGB, row-major. Used for the colour maps too. */

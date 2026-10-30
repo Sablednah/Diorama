@@ -356,6 +356,16 @@ Chrome's window frame, not missing tiles. Links are `#world/view/x/z/zoom`, x/z 
   browse the map: the CityWorld lookup timed out on every request until it called the
   (documented thread-safe) API directly.
 
+- ⚠ **A block that cannot be drawn must never fail its tile.** `BlockModels.get` caches only
+  what it returns, so an exception escaping it is retried — and fails the whole tile — every pass.
+  ZARP logged 463 in a session: AE2, Lootr and Sophisticated Storage use NeoForge's custom
+  block-state loaders (`{"type": "ae2:crafting_cube"}`, no `"model"`), and the shape fallback's
+  particle lookup read `"model"` unguarded. Now a `"type"` variant borrows the first of its own
+  fields that names a real model (Lootr's `"vanilla"`), a block with no texture draws in its map
+  colour, one with neither is left out, and anything that still throws is cached empty and named
+  once. Also: textures may exist only as **block-atlas aliases** (`atlases/blocks.json` `single`
+  sources with a `sprite`), which `Assets` now follows. Verified with the real Lootr and
+  Sophisticated Storage jars on the dev server; AE2 needs NeoForge .88+ and was not loaded.
 - ⚠ **Gradle's file-system watching does not work on `/mnt/d`** (drvfs sends no inotify). A newly
   added class compiled as `cannot find symbol` from the class that used it. `gradle.properties`
   sets `org.gradle.vfs.watch=false`; do not remove it.
