@@ -8,8 +8,8 @@ tasks.named('wrapper', Wrapper).configure {
     distributionType = Wrapper.DistributionType.BIN
 }
 
-// The jar carries its Minecraft version (diorama-0.1.0+mc26.2.jar) because Diorama will live on
-// several Minecraft lines at once, and two files both called diorama-0.1.0.jar are
+// The jar carries its Minecraft version (diorama-1.0.0+mc26.2.jar) because Diorama will live on
+// several Minecraft lines at once, and two files both called diorama-1.0.0.jar are
 // indistinguishable in a mods folder. The version INSIDE neoforge.mods.toml stays plain.
 if (project.hasProperty('winClient')) {
     layout.buildDirectory = layout.projectDirectory.dir("build-win-${project.winClient}")
