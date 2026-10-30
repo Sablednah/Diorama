@@ -16,10 +16,10 @@ a generated city wants to be seen as.
 
 | | |
 |---|---|
-| Minecraft | **26.2 first** (`main` is the 26.2 line for now); other lines follow once the renderer is right |
-| Loader | NeoForge 26.2.0.72 |
+| Minecraft | **26.3** on this branch (`mc26.3`); `main` is the 26.2 line, which came first |
+| Loader | NeoForge 26.3.0.58-beta (the declared floor too: see `gradle.properties`) |
 | Java | 25 (Gradle itself is launched on the JDK 21 below; foojay provisions 25) |
-| Build | Gradle 9.2.1 + ModDevGradle 2.0.144 |
+| Build | Gradle 9.2.1 + ModDevGradle 2.0.147 |
 | Licence | MIT. Bundles Leaflet 1.9.4 (BSD-2, `src/main/resources/assets/diorama/web/leaflet/LICENSE`) |
 | Package | `com.sablednah.diorama` |
 
@@ -44,17 +44,18 @@ export JAVA_HOME=/mnt/d/Repos/sable/MobHealth-Forge/tools/jdk21
 export PATH="$JAVA_HOME/bin:$PATH"
 
 ./gradlew compileJava              # fast inner loop
-./gradlew build                    # -> build/libs/diorama-<version>+mc26.2.jar
-./gradlew runServer                # dev server, game dir run-mc26.2/, port 25600
+./gradlew build                    # -> build/libs/diorama-<version>+mc26.3.jar
+./gradlew runServer                # dev server, game dir run-mc26.3/, port 25603
 ./gradlew runServer -Pselftest     # same, running SelfTest once assets are loaded
 ./gradlew runClient                # single player: map on http://127.0.0.1:8124/
 ```
 
-- Dev server game port **25600** (free in the series table); the map's web port defaults to
-  **8124**. Kill a previous `runServer` by matching **this repo's path**, never `fml.modFolders` —
+- Dev server game port **25603** on this line (main's 26.2 uses 25600), passed as `--port` so it
+  overrides `server.properties`; the map's web port defaults to **8124**, and the 26.3 dev
+  config sets **8126**. Kill a previous `runServer` by matching **this repo's path**, never `fml.modFolders` —
   the sibling mods run dev servers on the same machine.
 - `-Pselftest`, not `-D`: a `-D` on the gradlew line lands on Gradle's JVM.
-- 26.2 sources for reference: unzip `build/moddev/artifacts/minecraft-patched-26.2.0.72-sources.jar`
+- 26.3 sources for reference: unzip `build/moddev/artifacts/minecraft-patched-26.3.0.58-beta-sources.jar`
   **onto the Linux filesystem** (the scratchpad), not `/mnt/d` — on drvfs it takes many minutes.
 
 ## How it works
@@ -77,7 +78,7 @@ the model parent chain, and bakes each element face **following `FaceBakery.bake
 step**: `FaceInfo` vertex order, `defaultFaceUV`, element rotation (single-axis *or* 26.x's
 x/y/z Euler form) with `rescale`, variant rotation about the block centre, and uvlock. The rotation
 maths it calls — `BlockMath`, `Quadrant`, `OctahedralGroup`, `Transformation` — are **common code
-on 26.2**, so the server calls the same methods the client does. Do not "simplify" this into
+on 26.x**, so the server calls the same methods the client does. Do not "simplify" this into
 per-block-type geometry; that is exactly what Schemy did.
 
 Blocks whose model is only a particle texture (chests, signs, beds, banners, heads — anything with
@@ -271,6 +272,23 @@ marker bug was found: the DOM had it dead centre while the screen had it in the 
 CSS `rotate` on the marker applies *before* Leaflet's `translate3d` and swung the whole position
 45° about the page origin. Rotate an inner element. The screenshot's bottom ~70 px is headless
 Chrome's window frame, not missing tiles. Links are `#world/view/x/z/zoom`, x/z at sea level.
+
+### The 26.3 port — what moved (2026-10-30)
+
+- **`ModConfig.Type` COMMON → LOCAL** (FML 12.0.8). Registered as `LOCAL` with the file name
+  `diorama-common.toml` passed explicitly, so an existing config is still the one read.
+- **`RedStoneWireBlock` → `RedstoneWireBlock`** (`BlockTints`). The rest of `BlockColors.createDefault`
+  is unchanged from 26.2.
+- ⚠ **Model elements lost `"shade": false`; 26.3 has `"shade_direction_override": "<dir>"`**, and
+  the client no longer reads `shade` at all. A face is lit as if it faced the override
+  (`BlockModelLighter.getDirectionalBrightness`), unrotated by the variant. Vanilla uses `"up"` on
+  `tinted_cross`, torches, tripwire, sea pickles and more — so without this every grass tuft and torch
+  would have drawn side-shaded. A compile cannot see this; it is a JSON format change.
+- Checked against the 26.3 sources and unchanged: `BlockMath`, `Quadrant`, `OctahedralGroup`,
+  `Transformation`, `FaceBakery`'s geometry, `GrassColor`/`FoliageColor`/`DryFoliageColor`,
+  `Biome`'s colour getters, `DimensionType.getStorageFolder`, the `ChunkMap.read`/`upgradeChunkTag`
+  path. `ChunkStatus` merged `noise`/`surface`/`carvers` into `terrain`, which matters only to
+  `!= FULL`. Colour-map PNG names and the Mojang manifest id (`26.3`) are as before.
 
 ## Gotchas already paid for
 
