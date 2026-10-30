@@ -1,7 +1,7 @@
 # SableCraft Diorama
 
 An isometric web map of your Minecraft world, rendered on the server — the classic "diorama" view
-of Dynmap's HD maps and the Minecraft Overviewer, for **NeoForge 26.2**.
+of Dynmap's HD maps and the Minecraft Overviewer, for **NeoForge 26.1.2**.
 
 Open it in a browser. Nobody needs to install anything: it is a web page.
 
@@ -54,7 +54,7 @@ each one costs as much rendering and disk as the first.
 
 ## Building
 
-Java 25, NeoForge 26.2.0.72, ModDevGradle. `./gradlew build`; `./gradlew runServer -Pselftest` runs
+Java 25, NeoForge 26.1.2.95, ModDevGradle. `./gradlew build`; `./gradlew runServer -Pselftest` runs
 the self-test against a real world.
 
 ## Licence

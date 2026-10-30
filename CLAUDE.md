@@ -16,8 +16,8 @@ a generated city wants to be seen as.
 
 | | |
 |---|---|
-| Minecraft | **26.2 first** (`main` is the 26.2 line for now); other lines follow once the renderer is right |
-| Loader | NeoForge 26.2.0.72 |
+| Minecraft | **26.1.2** on this branch (`mc26.1`), ported back from `main`, which is the 26.2 line Diorama was written on first |
+| Loader | NeoForge 26.1.2.95 (declares `[26.1,26.2)`, NeoForge floor 26.1) |
 | Java | 25 (Gradle itself is launched on the JDK 21 below; foojay provisions 25) |
 | Build | Gradle 9.2.1 + ModDevGradle 2.0.144 |
 | Licence | MIT. Bundles Leaflet 1.9.4 (BSD-2, `src/main/resources/assets/diorama/web/leaflet/LICENSE`) |
@@ -44,17 +44,18 @@ export JAVA_HOME=/mnt/d/Repos/sable/MobHealth-Forge/tools/jdk21
 export PATH="$JAVA_HOME/bin:$PATH"
 
 ./gradlew compileJava              # fast inner loop
-./gradlew build                    # -> build/libs/diorama-<version>+mc26.2.jar
-./gradlew runServer                # dev server, game dir run-mc26.2/, port 25600
+./gradlew build                    # -> build/libs/diorama-<version>+mc26.1.2.jar
+./gradlew runServer                # dev server, game dir run-mc26.1.2/, port 25602
 ./gradlew runServer -Pselftest     # same, running SelfTest once assets are loaded
 ./gradlew runClient                # single player: map on http://127.0.0.1:8124/
 ```
 
-- Dev server game port **25600** (free in the series table); the map's web port defaults to
+- Dev server game port **25602** on this line (`main`'s 26.2 server holds 25600; keep them apart so
+  both can run at once); the map's web port defaults to
   **8124**. Kill a previous `runServer` by matching **this repo's path**, never `fml.modFolders` —
   the sibling mods run dev servers on the same machine.
 - `-Pselftest`, not `-D`: a `-D` on the gradlew line lands on Gradle's JVM.
-- 26.2 sources for reference: unzip `build/moddev/artifacts/minecraft-patched-26.2.0.72-sources.jar`
+- 26.1.2 sources for reference: unzip `build/moddev/artifacts/minecraft-patched-26.1.2.95-sources.jar`
   **onto the Linux filesystem** (the scratchpad), not `/mnt/d` — on drvfs it takes many minutes.
 
 ## How it works
@@ -77,7 +78,8 @@ the model parent chain, and bakes each element face **following `FaceBakery.bake
 step**: `FaceInfo` vertex order, `defaultFaceUV`, element rotation (single-axis *or* 26.x's
 x/y/z Euler form) with `rescale`, variant rotation about the block centre, and uvlock. The rotation
 maths it calls — `BlockMath`, `Quadrant`, `OctahedralGroup`, `Transformation` — are **common code
-on 26.2**, so the server calls the same methods the client does. Do not "simplify" this into
+on 26.1 and 26.2** (checked against the 26.1.2 dedicated-server jar, not assumed), so the server
+calls the same methods the client does. Do not "simplify" this into
 per-block-type geometry; that is exactly what Schemy did.
 
 Blocks whose model is only a particle texture (chests, signs, beds, banners, heads — anything with
@@ -346,6 +348,11 @@ Chrome's window frame, not missing tiles. Links are `#world/view/x/z/zoom`, x/z 
 - ⚠ **drvfs file times run ~40 s behind WSL's clock.** A "was this tile rewritten since T" check
   by mtime said no while the tile had been redrawn. Compare contents (`md5sum`), not times.
 - `runServer` ends `BUILD FAILED` when the server is killed. That is the kill, not a build fault.
+- ⚠ **A brand-new 26.1 world fails the spawn-pixel checks (4 of them), and that is the world, not
+  the renderer.** It saves ~529 chunks on first start but only a couple of dozen reach `FULL`, so
+  the ray through spawn's column runs into an unfinished neighbour and draws nothing. Generate
+  some land first (`forceload add -96 -96 96 96`, `save-all flush` over RCON on 25612), then run
+  the self-test: 47/47 on a vanilla world, measured 2026-10-30.
 
 ## Known gaps, in rough priority
 
