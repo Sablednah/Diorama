@@ -52,6 +52,7 @@ final class SelfTest {
         everyStateResolves(models);
         cubeFacesAndCulling(models);
         stairsAreNotCubes(models);
+        customLoaderVariants(models);
         viewsLookAwayFromTheirCorner();
         messagesParse();
         markersSample(service);
@@ -103,6 +104,28 @@ final class SelfTest {
         // full cube like stone is not, and would mean the dispatch itself is broken.
         check(!fallbackBlocks.contains("minecraft:stone") && !fallbackBlocks.contains("minecraft:oak_stairs")
                 && !fallbackBlocks.contains("minecraft:grass_block"), "plain blocks fell back to their shape");
+    }
+
+    /**
+     * Variants for a mod's own model loader carry a "type" and no "model". ZARP's AE2, Lootr and
+     * Sophisticated Storage blocks threw from the shape fallback on every tile that held one; the
+     * JSON here is theirs, verbatim in shape.
+     */
+    private static void customLoaderVariants(BlockModels models) {
+        var lootr = com.google.gson.JsonParser.parseString(
+                "{\"type\": \"lootr:custom\", \"open\": false, \"opened\": \"lootr:block/opened_barrel\","
+                + " \"state\": {\"x\": 180}, \"vanilla\": \"minecraft:block/barrel\"}").getAsJsonObject();
+        // With Lootr installed its own "opened" model resolves first; without it, vanilla's barrel.
+        // Either is a model the variant itself names, which is the point.
+        String ref = models.modelRef(lootr);
+        check("minecraft:block/barrel".equals(ref) || "lootr:block/opened_barrel".equals(ref),
+                "a custom-loader variant naming a real model resolved to " + ref);
+        var ae2 = com.google.gson.JsonParser.parseString(
+                "{\"type\": \"ae2:crafting_cube\", \"unit_type\": \"storage_16k\"}").getAsJsonObject();
+        ref = models.modelRef(ae2);
+        check(ref == null, "a custom-loader variant naming no model resolved to " + ref);
+        var plain = com.google.gson.JsonParser.parseString("{\"model\": \"minecraft:block/stone\", \"y\": 90}").getAsJsonObject();
+        check("minecraft:block/stone".equals(models.modelRef(plain)), "an ordinary variant lost its model");
     }
 
     /** A ray onto stone's top must hit it, and the same ray must not hit its underside. */
