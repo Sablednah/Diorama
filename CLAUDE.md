@@ -16,10 +16,10 @@ a generated city wants to be seen as.
 
 | | |
 |---|---|
-| Minecraft | **26.2 first** (`main` is the 26.2 line for now); other lines follow once the renderer is right |
-| Loader | NeoForge 26.2.0.72 |
-| Java | 25 (Gradle itself is launched on the JDK 21 below; foojay provisions 25) |
-| Build | Gradle 9.2.1 + ModDevGradle 2.0.144 |
+| Minecraft | **1.21.11** — this is the `mc1.21.11` branch, ported back from 26.2 (`main`, where Diorama started) |
+| Loader | NeoForge 21.11.42 (declared floor `[21.11,)`) |
+| Java | 21 |
+| Build | Gradle 9.2.1 + ModDevGradle 2.0.141 |
 | Licence | MIT. Bundles Leaflet 1.9.4 (BSD-2, `src/main/resources/assets/diorama/web/leaflet/LICENSE`) |
 | Package | `com.sablednah.diorama` |
 
@@ -44,8 +44,9 @@ export JAVA_HOME=/mnt/d/Repos/sable/MobHealth-Forge/tools/jdk21
 export PATH="$JAVA_HOME/bin:$PATH"
 
 ./gradlew compileJava              # fast inner loop
-./gradlew build                    # -> build/libs/diorama-<version>+mc26.2.jar
-./gradlew runServer                # dev server, game dir run-mc26.2/, port 25600
+./gradlew build                    # -> build/libs/diorama-<version>+mc1.21.11.jar
+./gradlew runServer                # dev server, game dir run-mc1.21.11/, port 25600
+./gradlew runServer -Pdev_server_port=25604   # beside main's 26.2 server: never share a port
 ./gradlew runServer -Pselftest     # same, running SelfTest once assets are loaded
 ./gradlew runClient                # single player: map on http://127.0.0.1:8124/
 ```
@@ -54,8 +55,9 @@ export PATH="$JAVA_HOME/bin:$PATH"
   **8124**. Kill a previous `runServer` by matching **this repo's path**, never `fml.modFolders` —
   the sibling mods run dev servers on the same machine.
 - `-Pselftest`, not `-D`: a `-D` on the gradlew line lands on Gradle's JVM.
-- 26.2 sources for reference: unzip `build/moddev/artifacts/minecraft-patched-26.2.0.72-sources.jar`
-  **onto the Linux filesystem** (the scratchpad), not `/mnt/d` — on drvfs it takes many minutes.
+- 1.21.11 sources for reference live inside `build/moddev/artifacts/neoforge-21.11.42-sources.jar`
+  (there is no separate minecraft-patched jar on this line). Unzip into `.apisrc/` (gitignored),
+  **on the Linux filesystem** — on drvfs it takes many minutes.
 
 ## How it works
 
@@ -74,15 +76,19 @@ neoforge/                          lifecycle, events, /diorama, Lang, Hidden, Se
 
 `BlockModels` reads `blockstates/*.json` (variants, multipart with `OR`/`AND`/`a|b`/`!x`), walks
 the model parent chain, and bakes each element face **following `FaceBakery.bakeQuad` step for
-step**: `FaceInfo` vertex order, `defaultFaceUV`, element rotation (single-axis *or* 26.x's
-x/y/z Euler form) with `rescale`, variant rotation about the block centre, and uvlock. The rotation
+step**: `FaceInfo` vertex order, `defaultFaceUV`, element rotation (single-axis *or* the
+x/y/z Euler form, which 1.21.11 already has) with `rescale`, variant rotation about the block centre, and uvlock. The rotation
 maths it calls — `BlockMath`, `Quadrant`, `OctahedralGroup`, `Transformation` — are **common code
-on 26.2**, so the server calls the same methods the client does. Do not "simplify" this into
+on 26.2 and on 1.21.11** (checked on 1.21.11 against the vanilla *server* jar, not only the dev
+classpath, which has the client too), so the server calls the same methods the client does. Do not "simplify" this into
 per-block-type geometry; that is exactly what Schemy did.
 
 Blocks whose model is only a particle texture (chests, signs, beds, banners, heads — anything with
 an entity renderer) fall back to their **outline shape in their particle texture**. The self-test
 logs the full fallback list; a plain cube appearing in it means the dispatch broke.
+On 1.21.11 the list is longer than on 26.2 — 148 blocks, not 84 — because **signs, hanging signs
+and beds** are still entity-rendered here (26.2 gave them block models). That is the version's own
+behaviour, not a fault; everything on it is entity-rendered, with no plain cube.
 
 ### 2. Where assets come from, first match wins
 
@@ -147,8 +153,9 @@ walk itself (`Quad.intersect`) was fourth. A full render went 80 s → 16 s.
   serialises against pending writes), upgraded with the datafixer if older, and parsed with
   `SerializableChunkData.parse`. We only ever read a region file's 4 KiB **header** ourselves, to
   learn which chunks exist.
-- ⚠ **26.1 moved dimension folders**: `DimensionType.getStorageFolder(dim, worldRoot)` gives
-  `dimensions/minecraft/overworld/…`. Never hand-build `world/region`.
+- ⚠ **Dimension folders differ by line**: on 1.21.11 `DimensionType.getStorageFolder(dim, worldRoot)`
+  gives the old `world/region`, `world/DIM-1/region`; 26.1 moved them to
+  `dimensions/minecraft/overworld/…`. Always ask that method; never hand-build `world/region`.
 - Only `ChunkStatus.FULL` chunks render. A half-generated chunk at the edge is not something a
   player saw.
 
