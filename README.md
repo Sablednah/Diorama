@@ -1,7 +1,10 @@
 # SableCraft Diorama
 
 An isometric web map of your Minecraft world, rendered on the server — the classic "diorama" view
-of Dynmap's HD maps and the Minecraft Overviewer, for **NeoForge 26.2**.
+of Dynmap's HD maps and the Minecraft Overviewer, for **NeoForge** on Minecraft 1.21.11, 26.1, 26.2
+and 26.3.
+
+![A CityWorld city by day](docs/screenshots/city-day.png)
 
 Open it in a browser. Nobody needs to install anything: it is a web page.
 
@@ -30,6 +33,8 @@ Open it in a browser. Nobody needs to install anything: it is a web page.
 - **Links you can send**: the address always names the world, view, place and zoom on screen.
 - Eight zoom levels, and a page that says why it is empty rather than looking broken.
 
+![The same city by night, with an owner region and markers](docs/screenshots/city-night-regions.png)
+
 ## Setting up a dedicated server
 
 A dedicated server has no block textures. Either:
@@ -47,6 +52,10 @@ changes are redrawn.
 | `/diorama` | everyone | the map's link |
 | `/diorama status` | operators | what it is doing, and why not if it is not |
 | `/diorama render [dimension]` | operators | redraw a dimension from scratch |
+| `/diorama render <dimension> <x> <z> <radius>` | operators | redraw the area round block x, z (radius in chunks) |
+| `/diorama region create <id> [label]` | operators | start a region; then `corner <id>` at each corner |
+| `/diorama region corner\|undo\|label\|detail\|colour\|height\|delete <id> …` | operators | edit one |
+| `/diorama region list` | operators | every region, datapack ones included |
 
 Set `web.publicUrl` if the server sits behind a proxy, so `/diorama` can give a working link.
 Every message is editable in `config/diorama/messages.yml`. `render.views` picks the camera corners;
@@ -54,8 +63,11 @@ each one costs as much rendering and disk as the first.
 
 ## Building
 
-Java 25, NeoForge 26.2.0.72, ModDevGradle. `./gradlew build`; `./gradlew runServer -Pselftest` runs
-the self-test against a real world.
+One branch per Minecraft line: `main` is 26.2, beside `mc1.21.11`, `mc26.1` and `mc26.3`. Java 25
+(21 on 1.21.11), ModDevGradle. `./gradlew build`; `./gradlew runServer -Pselftest` runs the self-test
+against a real world.
+
+More screenshots are in [docs/screenshots](docs/screenshots).
 
 ## Licence
 

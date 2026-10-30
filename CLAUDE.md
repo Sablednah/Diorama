@@ -16,7 +16,7 @@ a generated city wants to be seen as.
 
 | | |
 |---|---|
-| Minecraft | **26.2 first** (`main` is the 26.2 line for now); other lines follow once the renderer is right |
+| Minecraft | 26.2 on `main`; branches `mc1.21.11`, `mc26.1`, `mc26.3` carry the other lines (ported for 1.0.0) |
 | Loader | NeoForge 26.2.0.72 |
 | Java | 25 (Gradle itself is launched on the JDK 21 below; foojay provisions 25) |
 | Build | Gradle 9.2.1 + ModDevGradle 2.0.144 |
