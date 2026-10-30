@@ -98,7 +98,7 @@ public final class FactionsTerritory implements Markers.MarkerSet {
                 int colour = (int) colourOf.invoke(server, id);
                 Set<Long> chunks = new HashSet<>();
                 for (ChunkPos c : e.getValue()) {
-                    chunks.add(ChunkPos.pack(c.x(), c.z()));
+                    chunks.add(c.toLong());
                 }
                 String detail = detailChunks.replace("{n}", String.valueOf(chunks.size()));
                 if (peaceful) {

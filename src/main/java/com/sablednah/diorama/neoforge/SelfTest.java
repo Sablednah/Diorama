@@ -341,8 +341,8 @@ final class SelfTest {
         int sea = store.level().getSeaLevel();
         var spawn = store.level().getRespawnData().globalPos().pos();
         int cx = spawn.getX() >> 4, cz = spawn.getZ() >> 4;
-        var one = java.util.Set.of(net.minecraft.world.level.ChunkPos.pack(cx, cz));
-        var two = java.util.Set.of(net.minecraft.world.level.ChunkPos.pack(cx, cz), net.minecraft.world.level.ChunkPos.pack(cx + 1, cz));
+        var one = java.util.Set.of(net.minecraft.world.level.ChunkPos.asLong(cx, cz));
+        var two = java.util.Set.of(net.minecraft.world.level.ChunkPos.asLong(cx, cz), net.minecraft.world.level.ChunkPos.asLong(cx + 1, cz));
         var lone = com.sablednah.diorama.render.RegionOutline.trace(one, store, sea);
         var pair = com.sablednah.diorama.render.RegionOutline.trace(two, store, sea);
         check(lone.size() == 4, "one chunk should have 4 edges, got " + lone.size());

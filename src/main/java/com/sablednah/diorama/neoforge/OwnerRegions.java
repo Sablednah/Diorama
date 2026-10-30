@@ -199,7 +199,7 @@ final class OwnerRegions implements Markers.MarkerSet {
         if (o.has("chunks")) {
             for (JsonElement c : o.getAsJsonArray("chunks")) {
                 JsonArray xz = c.getAsJsonArray();
-                r.chunks.add(ChunkPos.pack(xz.get(0).getAsInt(), xz.get(1).getAsInt()));
+                r.chunks.add(ChunkPos.asLong(xz.get(0).getAsInt(), xz.get(1).getAsInt()));
             }
         }
         return r;

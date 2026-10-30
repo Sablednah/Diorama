@@ -38,8 +38,10 @@ import org.jspecify.annotations.Nullable;
  * elements, and {@link #bakeFace} follows {@code FaceBakery.bakeQuad} step for step — the same
  * vertex order, the same default UVs, the same element rotation and rescale, the same variant
  * rotation about the block centre and the same uvlock maths. The rotation helpers it leans on
- * ({@link BlockMath}, {@link Quadrant}, {@link Transformation}) are common code on 26.2, so the
- * server reaches the very methods the client calls.</p>
+ * ({@link BlockMath}, {@link Quadrant}, {@link Transformation}) are common code on 26.2 and on
+ * 1.21.11 (present in the vanilla dedicated-server jar), so the server reaches the very methods the
+ * client calls. 1.21.11's {@code FaceBakery}, {@code BlockElementRotation} (Euler form included)
+ * and {@code BlockModelRotation} were read against this and match it.</p>
  *
  * <p>Results are cached per state. A state that resolves to nothing becomes {@link Baked#EMPTY},
  * and the count of those is what the self-test reports.</p>
@@ -275,7 +277,7 @@ public final class BlockModels {
 
         var group = Quadrant.fromXYZAngles(x, y, z);
         Transformation rotation = group == com.mojang.math.OctahedralGroup.IDENTITY
-                ? Transformation.IDENTITY
+                ? Transformation.identity()
                 : new Transformation(new Matrix4f(group.transformation()));
 
         List<Quad> out = new ArrayList<>();
@@ -434,7 +436,7 @@ public final class BlockModels {
         int[][] info = FACE_INFO[facing.ordinal()];
 
         Matrix4fc uvTransform = null;
-        if (uvlock && rotation != Transformation.IDENTITY) {
+        if (uvlock && rotation != Transformation.identity()) {
             uvTransform = BlockMath.getFaceTransformation(rotation, facing).getMatrix().invertAffine(new Matrix4f());
         }
 
@@ -447,7 +449,7 @@ public final class BlockModels {
                 rotMatrix.transformPosition(v);
                 v.add(rotOrigin);
             }
-            if (rotation != Transformation.IDENTITY) {
+            if (rotation != Transformation.identity()) {
                 v.sub(BLOCK_MIDDLE);
                 rotation.getMatrix().transformPosition(v);
                 v.add(BLOCK_MIDDLE);
@@ -525,7 +527,7 @@ public final class BlockModels {
             Vector3f from = new Vector3f((float) box.minX * 16f, (float) box.minY * 16f, (float) box.minZ * 16f);
             Vector3f to = new Vector3f((float) box.maxX * 16f, (float) box.maxY * 16f, (float) box.maxZ * 16f);
             for (Direction d : Direction.values()) {
-                Quad q = bakeFace(from, to, defaultFaceUV(from, to, d), 0, d, Transformation.IDENTITY, false, null, null, tex, -1, true);
+                Quad q = bakeFace(from, to, defaultFaceUV(from, to, d), 0, d, Transformation.identity(), false, null, null, tex, -1, true);
                 if (q != null) {
                     out.add(q);
                 }

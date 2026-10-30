@@ -1,6 +1,6 @@
 plugins {
     id 'java-library'
-    id 'net.neoforged.moddev' version '2.0.144'
+    id 'net.neoforged.moddev' version '2.0.141'
     id 'idea'
 }
 
@@ -8,7 +8,7 @@ tasks.named('wrapper', Wrapper).configure {
     distributionType = Wrapper.DistributionType.BIN
 }
 
-// The jar carries its Minecraft version (diorama-1.0.0+mc26.2.jar) because Diorama will live on
+// The jar carries its Minecraft version (diorama-1.0.0+mc1.21.11.jar) because Diorama will live on
 // several Minecraft lines at once, and two files both called diorama-1.0.0.jar are
 // indistinguishable in a mods folder. The version INSIDE neoforge.mods.toml stays plain.
 if (project.hasProperty('winClient')) {
@@ -22,7 +22,7 @@ base {
     archivesName = mod_id
 }
 
-java.toolchain.languageVersion = JavaLanguageVersion.of(25)
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 
 neoForge {
     version = project.neo_version

@@ -22,7 +22,7 @@ import org.jspecify.annotations.Nullable;
  * The colour a {@code tintindex} face is multiplied by — grass, leaves, water, redstone.
  *
  * <p>The client keeps this table in {@code BlockColors.createDefault}, which a dedicated server
- * does not have. This is that table, transcribed from 26.2, with the world-side colour of each
+ * does not have. This is that table, transcribed from 26.2 and identical on 1.21.11, with the world-side colour of each
  * entry (the lily pad's in-hand and in-world greens differ, and a map is the world).</p>
  *
  * <p>The biome half needs the colour maps. {@code GrassColor} and friends are common code whose

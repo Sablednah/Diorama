@@ -94,7 +94,7 @@ public final class ChunkStore {
     /** A freshly saved chunk: replaces whatever we held. Called from a render thread, not the server's. */
     public @Nullable ChunkSnap accept(ChunkPos pos, SerializableChunkData data) {
         ChunkSnap snap = ChunkSnap.of(data, keepLight, ceiling);
-        long key = pos.pack();
+        long key = pos.toLong();
         cache.put(key, snap == null ? NONE : snap);
         if (snap != null) {
             existing.add(key);
@@ -104,7 +104,7 @@ public final class ChunkStore {
 
     /** The chunk, from memory or disk, or {@code null} when it does not exist or is not fully generated. */
     public @Nullable ChunkSnap get(int cx, int cz) {
-        long key = ChunkPos.pack(cx, cz);
+        long key = ChunkPos.asLong(cx, cz);
         Object held = cache.get(key);
         if (held != null) {
             hits.incrementAndGet();
@@ -147,8 +147,7 @@ public final class ChunkStore {
                 // A chunk nobody has visited since an upgrade. The game upgrades it on load; so must
                 // we, or the palette names blocks that no longer exist.
                 tag = chunkMap.upgradeChunkTag(tag, -1,
-                        ChunkMap.getChunkDataFixContextTag(level.dimension(), level.getChunkSource().getGenerator().getTypeNameForDataFixer()),
-                        current);
+                        ChunkMap.getChunkDataFixContextTag(level.dimension(), level.getChunkSource().getGenerator().getTypeNameForDataFixer()));
             }
             return ChunkSnap.of(SerializableChunkData.parse(level, level.palettedContainerFactory(), tag), keepLight, ceiling);
         } catch (RuntimeException e) {
@@ -197,7 +196,7 @@ public final class ChunkStore {
             for (int i = 0; i < 1024; i++) {
                 // Sector offset and count, packed. Zero means the chunk was never written.
                 if (in.readInt() != 0) {
-                    existing.add(ChunkPos.pack((rx << 5) + (i & 31), (rz << 5) + (i >> 5)));
+                    existing.add(ChunkPos.asLong((rx << 5) + (i & 31), (rz << 5) + (i >> 5)));
                     found++;
                 }
             }

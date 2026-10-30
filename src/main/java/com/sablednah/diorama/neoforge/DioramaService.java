@@ -308,7 +308,7 @@ public final class DioramaService {
             return;
         }
         touched.computeIfAbsent(level.dimension(), k -> new java.util.LinkedHashSet<>())
-                .add(ChunkPos.pack(blockX >> 4, blockZ >> 4));
+                .add(ChunkPos.asLong(blockX >> 4, blockZ >> 4));
     }
 
     /**
@@ -376,7 +376,7 @@ public final class DioramaService {
             }
             ChunkSnap snap = map.store().accept(s.pos(), s.data());
             if (snap != null) {
-                map.markChunk(s.pos().x(), s.pos().z(), snap);
+                map.markChunk(s.pos().x, s.pos().z, snap);
             }
         }
     }

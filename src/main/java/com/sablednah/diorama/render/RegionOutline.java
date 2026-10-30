@@ -35,16 +35,16 @@ public final class RegionOutline {
             int cx = ChunkPos.getX(key), cz = ChunkPos.getZ(key);
             ChunkSnap snap = store.get(cx, cz);
             int x0 = cx * 16, z0 = cz * 16;
-            if (!chunks.contains(ChunkPos.pack(cx, cz - 1))) {
+            if (!chunks.contains(ChunkPos.asLong(cx, cz - 1))) {
                 out.add(edge(snap, fallbackY, x0, z0, 1, 0, x0, z0));               // north side
             }
-            if (!chunks.contains(ChunkPos.pack(cx, cz + 1))) {
+            if (!chunks.contains(ChunkPos.asLong(cx, cz + 1))) {
                 out.add(edge(snap, fallbackY, x0, z0 + 16, 1, 0, x0, z0 + 15));     // south side
             }
-            if (!chunks.contains(ChunkPos.pack(cx - 1, cz))) {
+            if (!chunks.contains(ChunkPos.asLong(cx - 1, cz))) {
                 out.add(edge(snap, fallbackY, x0, z0, 0, 1, x0, z0));               // west side
             }
-            if (!chunks.contains(ChunkPos.pack(cx + 1, cz))) {
+            if (!chunks.contains(ChunkPos.asLong(cx + 1, cz))) {
                 out.add(edge(snap, fallbackY, x0 + 16, z0, 0, 1, x0 + 15, z0));     // east side
             }
         }

@@ -364,14 +364,14 @@ public final class MapRenderer {
     /** Record a chunk's heights for the survey, marking nothing: its tiles are already drawn. */
     public void recordChunk(int cx, int cz, ChunkSnap snap) {
         int low = snap.lowestTop() - 1, high = snap.topY();
-        extents.put(ChunkPos.pack(cx, cz), new int[] {low, high});
+        extents.put(ChunkPos.asLong(cx, cz), new int[] {low, high});
         heightsChanged = true;
         cover(cx, cz, low, high, null);
     }
 
     /** Record a chunk's current contents and mark every tile it can affect. */
     public void markChunk(int cx, int cz, ChunkSnap snap) {
-        long key = ChunkPos.pack(cx, cz);
+        long key = ChunkPos.asLong(cx, cz);
         int low = snap.lowestTop() - 1;
         int high = snap.topY();
         int[] previous = extents.put(key, new int[] {low, high});

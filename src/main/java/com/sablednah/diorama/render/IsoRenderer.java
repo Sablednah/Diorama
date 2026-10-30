@@ -300,7 +300,7 @@ public final class IsoRenderer {
         if (cx == lastCx && cz == lastCz && lastValid) {
             return lastSnap;
         }
-        long key = ChunkPos.pack(cx, cz);
+        long key = ChunkPos.asLong(cx, cz);
         int slot = (int) (key ^ (key >>> 29) ^ (key >>> 13)) * 0x9E3779B1 >>> 21; // top 11 bits: 0..2047
         ChunkSnap snap;
         while (true) {
