@@ -1,0 +1,120 @@
+name: Publish to CurseForge
+
+# Publishing a GitHub release publishes to CurseForge too. Every jar attached to the release is
+# uploaded, with the Minecraft version read from its filename (diorama-1.0.0+mc26.2.jar) and
+# the release body used as the changelog.
+#
+# Setup, once:
+#   1. Create an API token at https://legacy.curseforge.com/account/api-tokens
+#   2. Add it as the repository secret CURSEFORGE_TOKEN
+#      (Settings -> Secrets and variables -> Actions -> New repository secret)
+#   3. Add the numeric project ID, shown on the CurseForge project page, as the repository
+#      variable CURSEFORGE_PROJECT_ID (same screen, "Variables" tab)
+#
+# Optional: set the repository variable CURSEFORGE_REQUIRED_DEPENDENCY to another project's slug to
+# declare a hard dependency on the uploaded file.
+#
+# Until the secret exists this workflow skips rather than fails, so it will not redden a release.
+
+on:
+  release:
+    types: [published]
+  # Re-upload an existing release by hand — after fixing a changelog, or for a release published
+  # before this workflow existed.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to upload (e.g. v1.0.0)
+        required: true
+      release_type:
+        description: CurseForge release type
+        required: false
+        default: release
+        type: choice
+        options: [release, beta, alpha]
+      only_mc:
+        description: >-
+          Upload only the jar for this Minecraft version (e.g. 1.21.11). Leave blank for all of
+          them. For retrying ONE line after a partial failure - CurseForge returns a 500 often
+          enough that it has already happened once, and re-running the whole tag would duplicate
+          the lines that succeeded.
+        required: false
+        default: ''
+      debug:
+        description: Print the upload metadata (contains no credentials)
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the CurseForge token is configured
+        id: guard
+        env:
+          TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+          PROJECT_ID: ${{ vars.CURSEFORGE_PROJECT_ID }}
+        run: |
+          if [ -z "$TOKEN" ] || [ -z "$PROJECT_ID" ]; then
+            echo "CURSEFORGE_TOKEN secret or CURSEFORGE_PROJECT_ID variable not set — skipping."
+            echo "See the comments at the top of .github/workflows/curseforge.yml for setup."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.guard.outputs.configured == 'true'
+
+      - name: Download the release jars and changelog
+        if: steps.guard.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          mkdir -p dist
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.jar' --dir dist
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq '.body' > dist/changelog.md
+          ls -la dist
+
+      - name: Upload each jar
+        if: steps.guard.outputs.configured == 'true'
+        env:
+          CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+          CURSEFORGE_PROJECT_ID: ${{ vars.CURSEFORGE_PROJECT_ID }}
+          CURSEFORGE_REQUIRED_DEPENDENCY: ${{ vars.CURSEFORGE_REQUIRED_DEPENDENCY }}
+          RELEASE_TYPE: ${{ inputs.release_type || 'release' }}
+          CURSEFORGE_DEBUG: ${{ inputs.debug && '1' || '' }}
+          ONLY_MC: ${{ inputs.only_mc || '' }}
+        run: |
+          shopt -s nullglob
+          jars=(dist/*.jar)
+          if [ ${#jars[@]} -eq 0 ]; then
+            echo "::error::No jars attached to the release — nothing to upload."
+            exit 1
+          fi
+          failed=0
+          for jar in "${jars[@]}"; do
+            # diorama-1.0.0+mc26.2.jar -> 26.2
+            mc="$(basename "$jar" .jar | sed -n 's/.*+mc\(.*\)$/\1/p')"
+            if [ -z "$mc" ]; then
+              echo "::warning::Cannot read a Minecraft version from $(basename "$jar") — skipping it."
+              continue
+            fi
+            if [ -n "$ONLY_MC" ] && [ "$mc" != "$ONLY_MC" ]; then
+              echo "Skipping $(basename "$jar") — only_mc is $ONLY_MC."
+              continue
+            fi
+            echo "::group::$(basename "$jar") -> Minecraft $mc"
+            # Keep going if one fails, so a single bad upload does not strand the others, then fail
+            # the job at the end so the failure is not silent.
+            # Invoked via bash rather than as ./script: this repo lives on an NTFS drive with
+            # core.fileMode=false, so exec bits are easily lost again on a future commit.
+            bash scripts/curseforge-upload.sh "$jar" "$mc" dist/changelog.md "$RELEASE_TYPE" || failed=1
+            echo "::endgroup::"
+          done
+          [ "$failed" -eq 0 ] || { echo "::error::At least one upload failed."; exit 1; }
