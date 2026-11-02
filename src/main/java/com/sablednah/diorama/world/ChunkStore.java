@@ -42,6 +42,12 @@ public final class ChunkStore {
     private static final Pattern REGION = Pattern.compile("r\\.(-?\\d+)\\.(-?\\d+)\\.mca");
     /** Cached as "known not to be renderable", so a missing chunk is not re-read every ray. */
     private static final Object NONE = new Object();
+    /**
+     * Map reads in flight on the game's IOWorkers at once, across every world. Two keeps the one
+     * IO thread busy without parking a queue of our reads in front of the players'. Only the read
+     * itself: the datafixer and parsing that follow run in parallel as before.
+     */
+    private static final java.util.concurrent.Semaphore READS = new java.util.concurrent.Semaphore(2);
 
     private final ServerLevel level;
     /** Whether snapshots keep light: only when night tiles are drawn. */
@@ -137,7 +143,15 @@ public final class ChunkStore {
     private @Nullable ChunkSnap load(ChunkPos pos) {
         ChunkMap chunkMap = level.getChunkSource().chunkMap;
         try {
-            Optional<CompoundTag> read = chunkMap.read(pos).join();
+            Optional<CompoundTag> read;
+            // The map's reads go through the game's IOWorker, the same queue a player's chunk loads
+            // wait in. Uncapped, every render thread had one queued at once during a full render.
+            READS.acquireUninterruptibly();
+            try {
+                read = chunkMap.read(pos).join();
+            } finally {
+                READS.release();
+            }
             if (read.isEmpty()) {
                 return null;
             }
