@@ -7,14 +7,12 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import com.sablednah.diorama.Diorama;
 import com.sablednah.diorama.DioramaConfig;
@@ -48,8 +46,9 @@ import org.jspecify.annotations.Nullable;
  *
  * <p><b>Nothing here runs on the server thread except handing work over.</b> The save hook queues
  * a chunk copy the game already made; the player list is sampled once a second. Asset loading,
- * chunk reading, ray casting and PNG writing all happen on Diorama's own threads, at minimum
- * priority, so the map can fall behind but the server cannot.</p>
+ * chunk reading, ray casting and PNG writing all happen on Diorama's own threads, which stand
+ * aside while the server's ticks run long ({@link RenderPool}) — minimum priority alone means
+ * nothing on Linux — so the map can fall behind but the server cannot.</p>
  */
 public final class DioramaService {
 
@@ -69,7 +68,8 @@ public final class DioramaService {
     private @Nullable BlockModels models;
     /** Filled once, in {@link #setUp}; empty until assets are ready. */
     private volatile Map<ResourceKey<Level>, MapRenderer> maps = Map.of();
-    private final ConcurrentLinkedQueue<Saved> saved = new ConcurrentLinkedQueue<>();
+    /** The newest copy of each chunk saved and not yet taken in. See {@link SaveQueue}. */
+    private final SaveQueue saved = new SaveQueue();
     private volatile List<PlayerDot> players = List.of();
     /**
      * Chunks with a block changed since we last copied them, oldest first. Server thread only: the
@@ -79,11 +79,9 @@ public final class DioramaService {
     private volatile @Nullable String fullRender;
 
     private final ExecutorService pool;
-    private final ScheduledExecutorService coordinator;
+    private final java.util.concurrent.ScheduledThreadPoolExecutor coordinator;
     private @Nullable ThreadLocal<IsoRenderer> renderers;
     private @Nullable MapWebServer web;
-
-    private record Saved(ResourceKey<Level> level, ChunkPos pos, SerializableChunkData data) {}
 
     public record PlayerDot(String name, String world, double x, double y, double z) {}
 
@@ -105,6 +103,12 @@ public final class DioramaService {
     private final Map<String, Long> outlineAge = new java.util.concurrent.ConcurrentHashMap<>();
 
     private volatile List<MarkerLayer> markers = List.of();
+    /**
+     * The one marker sample waiting for the coordinator, if any. Only the latest is ever held: a
+     * publish queued behind a long render used to wait there with every sample after it, each a
+     * copy of every marker set.
+     */
+    private final AtomicReference<@Nullable List<RawLayer>> pendingMarkers = new AtomicReference<>();
     /** Sets that have thrown once, so a broken one logs once rather than every five seconds. */
     private final java.util.Set<String> complained = new java.util.HashSet<>();
 
@@ -113,8 +117,8 @@ public final class DioramaService {
         this.worldRoot = server.getWorldPath(LevelResource.ROOT);
         this.tilesBase = tilesHome(worldRoot);
         this.dedicated = server.isDedicatedServer();
-        this.pool = Executors.newFixedThreadPool(DioramaConfig.RENDER_THREADS.get(), threads("Diorama-render"));
-        this.coordinator = Executors.newSingleThreadScheduledExecutor(threads("Diorama-coordinator"));
+        this.pool = new RenderPool(DioramaConfig.RENDER_THREADS.get(), threads("Diorama-render"), server);
+        this.coordinator = new java.util.concurrent.ScheduledThreadPoolExecutor(1, threads("Diorama-coordinator"));
     }
 
     public static @Nullable DioramaService current() {
@@ -222,7 +226,12 @@ public final class DioramaService {
             state = State.READY;
             Diorama.LOGGER.info("Diorama: ready — {} asset source(s), {} dimension(s)", assets.sources().size(), maps.size());
 
-            saveWorld();
+            // Only a map with no tiles yet needs the world saved first: its first full render reads
+            // the region files, and a brand-new world is nearly all in memory. Everywhere else the
+            // game's eager saves (every changed chunk, ~10 s after it changed) deliver within seconds.
+            if (maps.values().stream().anyMatch(MapRenderer::missingTiles)) {
+                saveWorld();
+            }
             if (Boolean.getBoolean("diorama.selftest")) {
                 SelfTest.run(this);
             }
@@ -335,7 +344,7 @@ public final class DioramaService {
                 }
                 var chunk = level.getChunkSource().getChunkNow(ChunkPos.getX(key), ChunkPos.getZ(key));
                 if (chunk != null && chunk.canBeSerialized()) {
-                    saved.add(new Saved(e.getKey(), chunk.getPos(), SerializableChunkData.copyOf(level, chunk)));
+                    saved.offer(e.getKey(), chunk.getPos(), SerializableChunkData.copyOf(level, chunk));
                     budget--;
                 }
             }
@@ -347,38 +356,45 @@ public final class DioramaService {
 
     void chunkSaved(ResourceKey<Level> level, ChunkPos pos, SerializableChunkData data) {
         if (state == State.READY || state == State.STARTING) {
-            saved.add(new Saved(level, pos, data));
+            saved.offer(level, pos, data);
         }
     }
 
     /**
      * Ask the server to save every changed chunk, and take the copies it hands us. Without this a
-     * new world is nearly all in memory: the disk holds a handful of chunks until the first
-     * autosave, and a full render draws only those. Not flushed — that would stall the server
-     * thread on disk writes — and it need not be, because our reads go through the same IOWorker
-     * the writes are queued on.
+     * new world is nearly all in memory and its first full render draws only the handful of chunks
+     * on disk. Not flushed — that would stall the server thread on disk writes — and it need not
+     * be, because our reads go through the same IOWorker the writes are queued on.
+     *
+     * <p>Only for a map with no tiles yet. It is an autosave-sized task on the server thread (every
+     * dimension's chunks and saved data), and anywhere else the game's own eager saves hand every
+     * changed chunk over within seconds. The wait is bounded: a server paused or lagging must not
+     * hold the map, nor the map the server.</p>
      */
     private void saveWorld() {
         try {
-            server.submit(() -> server.saveAllChunks(true, false, false)).join();
-        } catch (RuntimeException e) {
+            server.submit(() -> server.saveAllChunks(true, false, false)).get(30, TimeUnit.SECONDS);
+        } catch (java.util.concurrent.TimeoutException e) {
+            Diorama.LOGGER.warn("Diorama: the world save before the first render took over 30 s; rendering what is on disk, the rest follows as it saves");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (java.util.concurrent.ExecutionException | RuntimeException e) {
             Diorama.LOGGER.warn("Diorama: could not save the world before rendering ({})", e.toString());
         }
         drainSaved();
     }
 
     private void drainSaved() {
-        Saved s;
-        while ((s = saved.poll()) != null) {
+        saved.drain(s -> {
             MapRenderer map = maps.get(s.level());
             if (map == null) {
-                continue;
+                return;
             }
             ChunkSnap snap = map.store().accept(s.pos(), s.data());
             if (snap != null) {
                 map.markChunk(s.pos().x(), s.pos().z(), snap);
             }
-        }
+        });
     }
 
     private void update() {
@@ -408,10 +424,11 @@ public final class DioramaService {
      * and for timing the renderer in minutes rather than a whole map's hours.
      */
     public Future<?> requestFullRender(ResourceKey<Level> level, int @org.jspecify.annotations.Nullable [] area) {
-        fullRender = level.identifier() + ": queued — saving the world first";
+        // No world save first: changed chunks reach the map within seconds through the game's own
+        // eager saves and live updates, and a save on demand was an autosave-sized server spike.
+        fullRender = level.identifier() + ": queued";
         return coordinator.submit(() -> {
             try {
-                saveWorld();
                 renderAll(level, true, area);
             } catch (java.util.concurrent.RejectedExecutionException e) {
                 // Stopping: see update().
@@ -458,7 +475,13 @@ public final class DioramaService {
                 done.incrementAndGet();
             }));
         }
+        int waited = 0;
         for (Future<?> f : reads) {
+            // Saves keep arriving during a long read: take them in as we go rather than letting
+            // them pile up until the render ends. markChunk is already called from many threads here.
+            if (++waited % 1024 == 0) {
+                drainSaved();
+            }
             try {
                 f.get();
             } catch (InterruptedException e) {
@@ -481,6 +504,9 @@ public final class DioramaService {
         map.store().takeCounts();
         // Each pass draws a capped share per view; a full render keeps going until it is done.
         while (map.pendingTiles() > 0 && !Thread.currentThread().isInterrupted()) {
+            // Between batches, as update() does: an hours-long render must not hold every chunk
+            // saved meanwhile in memory, nor keep them off the map until it ends.
+            drainSaved();
             map.renderDirty(pool, renderers);
             fullRender = name + ": drawing, " + map.pendingTiles() + " tiles to go";
         }
@@ -496,11 +522,26 @@ public final class DioramaService {
                 c[0], c[1], com.sablednah.diorama.DioramaConfig.CHUNK_CACHE.get());
     }
 
-    /** Once a second, from the server thread. */
-    /** Server thread, every five seconds: ask every set, then trace off the server thread. */
+    /**
+     * Server thread, every five seconds: ask every set, then trace off the server thread. While the
+     * last sample is still waiting for the coordinator (behind a long render), nothing is asked:
+     * the sets are not called for an answer nobody will read, and only one sample is ever held.
+     */
     void sampleMarkers() {
-        List<RawLayer> raw = collectMarkers();
-        coordinator.execute(() -> publishMarkers(raw));
+        if (pendingMarkers.get() != null) {
+            return;
+        }
+        pendingMarkers.set(collectMarkers());
+        try {
+            coordinator.execute(() -> {
+                List<RawLayer> raw = pendingMarkers.getAndSet(null);
+                if (raw != null) {
+                    publishMarkers(raw);
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            pendingMarkers.set(null);
+        }
     }
 
     /** Server thread. Each set reports its whole truth; nothing is kept between. */
@@ -640,6 +681,16 @@ public final class DioramaService {
 
     public MinecraftServer server() {
         return server;
+    }
+
+    /** Tasks queued on the coordinator behind the one running, for the self-test. */
+    int coordinatorBacklog() {
+        return coordinator.getQueue().size();
+    }
+
+    /** Whether a marker sample is waiting for the coordinator, for the self-test. */
+    boolean markersPending() {
+        return pendingMarkers.get() != null;
     }
 
     /** The render pool, for the self-test's repairs. */

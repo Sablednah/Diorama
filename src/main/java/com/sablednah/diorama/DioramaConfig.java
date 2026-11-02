@@ -24,6 +24,7 @@ public final class DioramaConfig {
     public static final ModConfigSpec.BooleanValue ACCEPT_DOWNLOAD;
 
     public static final ModConfigSpec.IntValue RENDER_THREADS;
+    public static final ModConfigSpec.IntValue PAUSE_ABOVE_TICK_MS;
     public static final ModConfigSpec.IntValue PIXELS_PER_BLOCK;
     public static final ModConfigSpec.IntValue UPDATE_SECONDS;
     public static final ModConfigSpec.IntValue CHUNK_CACHE;
@@ -64,8 +65,16 @@ public final class DioramaConfig {
         b.pop();
 
         b.comment("The renderer.").push("render");
-        RENDER_THREADS = b.comment("Worker threads drawing tiles. They never touch the server thread, but they do share the CPU with it.")
-                .defineInRange("threads", Math.max(1, Runtime.getRuntime().availableProcessors() / 2), 1, 64);
+        RENDER_THREADS = b.comment(
+                        "Worker threads drawing tiles. They never touch the server thread, but they do share the CPU",
+                        "with it — and on Linux as equals, since the JVM ignores thread priorities there. The default is",
+                        "a quarter of the cores (at least one); a first render of a big map goes faster with more.")
+                .defineInRange("threads", Math.max(1, Runtime.getRuntime().availableProcessors() / 4), 1, 64);
+        PAUSE_ABOVE_TICK_MS = b.comment(
+                        "While the server's average tick takes longer than this many milliseconds, render workers",
+                        "pause before each tile (up to 2 s each time), so the map falls behind instead of the server.",
+                        "50 ms is a full tick. 0 never pauses.")
+                .defineInRange("pauseAboveTickMs", 40, 0, 1000);
         PIXELS_PER_BLOCK = b.comment(
                         "Width of one block on the most zoomed-in tiles. 32 shows every texel of a top face;",
                         "16 renders four times faster and still reads well. Changing it invalidates every tile.")
