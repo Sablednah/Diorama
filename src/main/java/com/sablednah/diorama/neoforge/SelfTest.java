@@ -56,6 +56,8 @@ final class SelfTest {
         viewsLookAwayFromTheirCorner();
         messagesParse();
         markersSample(service);
+        savesKeepTheNewest(service);
+        markerSamplesDoNotPileUp(service);
         unscannedStoreStillFinds(service);
         regionsTrace(service);
         pickFindsTheGround(service);
@@ -253,6 +255,52 @@ final class SelfTest {
         } catch (java.io.IOException ignored) {
             // a temp folder left behind is the OS's to clear
         }
+    }
+
+    /**
+     * The save queue holds one copy per chunk, the newest, and nothing that is not FULL: it used to
+     * hold every save in order, and players exploring through a long render filled the heap.
+     */
+    private static void savesKeepTheNewest(DioramaService service) {
+        ServerLevel overworld = service.server().overworld();
+        BlockPos spawn = overworld.getRespawnData().globalPos().pos();
+        var pos = new net.minecraft.world.level.ChunkPos(spawn.getX() >> 4, spawn.getZ() >> 4);
+        var first = service.server().submit(() -> net.minecraft.world.level.chunk.storage.SerializableChunkData.copyOf(
+                overworld, overworld.getChunk(pos.x(), pos.z()))).join();
+        var second = service.server().submit(() -> net.minecraft.world.level.chunk.storage.SerializableChunkData.copyOf(
+                overworld, overworld.getChunk(pos.x(), pos.z()))).join();
+        var d = first;
+        var proto = new net.minecraft.world.level.chunk.storage.SerializableChunkData(d.containerFactory(), d.chunkPos(), d.minSectionY(),
+                d.lastUpdateTime(), d.inhabitedTime(), net.minecraft.world.level.chunk.status.ChunkStatus.FEATURES, d.blendingData(),
+                d.belowZeroRetrogen(), d.upgradeData(), d.carvingMask(), d.heightmaps(), d.packedTicks(), d.postProcessingSections(),
+                d.lightCorrect(), d.sectionData(), d.entities(), d.blockEntities(), d.structureData(), d.attachmentData(), d.auxLightData());
+
+        SaveQueue q = new SaveQueue();
+        check(q.offer(overworld.dimension(), pos, first), "save queue refused a FULL chunk");
+        check(q.offer(overworld.dimension(), pos, second) && q.size() == 1,
+                "save queue: a second save of one chunk should replace the first, holds " + q.size());
+        check(!q.offer(overworld.dimension(), new net.minecraft.world.level.ChunkPos(pos.x() + 1, pos.z()), proto) && q.size() == 1,
+                "save queue kept a chunk that is not FULL");
+        // The same chunk in another world is another chunk.
+        q.offer(net.minecraft.world.level.Level.NETHER, pos, first);
+        List<Object> taken = new ArrayList<>();
+        q.drain(s -> taken.add(s.level() == overworld.dimension() ? s.data() : s.level()));
+        check(taken.size() == 2 && taken.contains(second) && !taken.contains(first) && q.size() == 0,
+                "save queue drained " + taken.size() + " (want the newest overworld copy and the nether one), " + q.size() + " left");
+    }
+
+    /**
+     * The self-test runs on the coordinator, so a sample asked for now cannot be published until it
+     * ends — the same position as a long render. Asking twice must leave one sample waiting, not two.
+     */
+    private static void markerSamplesDoNotPileUp(DioramaService service) {
+        int before = service.coordinatorBacklog();
+        service.server().submit(service::sampleMarkers).join();
+        service.server().submit(service::sampleMarkers).join();
+        service.server().submit(service::sampleMarkers).join();
+        int after = service.coordinatorBacklog();
+        check(service.markersPending() && after <= Math.max(before, 1),
+                "marker samples piled up behind the coordinator: " + before + " queued before, " + after + " after three samples");
     }
 
     /** Read the chunk at spawn through the real store and draw the tile above it. */

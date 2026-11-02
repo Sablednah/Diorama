@@ -355,6 +355,27 @@ Chrome's window frame, not missing tiles. Links are `#world/view/x/z/zoom`, x/z 
   once. Also: textures may exist only as **block-atlas aliases** (`atlases/blocks.json` `single`
   sources with a `sprite`), which `Assets` now follows. Verified with the real Lootr and
   Sophisticated Storage jars on the dev server; AE2 needs NeoForge .88+ and was not loaded.
+- ⚠ **"Nothing on the server thread" was not the same as "the server cannot fall behind".**
+  A review (2026-11-02) found five ways the map still cost the server, all fixed:
+  - **The save queue was an unbounded FIFO of whole `SerializableChunkData`s**, taken in only
+    between `update()` passes, so players exploring through an hours-long render could push the
+    heap into gigabytes. `SaveQueue` now keeps the **newest copy per (world, chunk)**, drops
+    non-FULL chunks on arrival (`ChunkSnap.of` discarded them anyway), and `renderAll` drains it
+    between batches and every 1,024 reads. A save is still never lost: a newer copy replaces an
+    older one, and `stop()` still drains before `heights.bin`.
+  - **Marker samples queued one per 5 s behind a long render**, each a copy of every set. Only the
+    latest is held now, and the tick does not ask the sets while one is waiting.
+  - **`saveWorld()` ran `saveAllChunks` on every start and every `/diorama render`** — an
+    autosave-sized server task (every dimension's chunks *and* saved data), `join()`ed with no
+    timeout. 26.x saves every changed loaded chunk **eagerly**, ~10 s after it changes
+    (`ChunkMap.saveChunksEagerly`, via `LevelChunk`'s unsaved listener), so it is only worth it for
+    a map with no tiles yet, and waits at most 30 s.
+  - **`MIN_PRIORITY` does nothing on Linux** (HotSpot ignores priorities without
+    `-XX:ThreadPriorityPolicy`). `RenderPool` waits before each task while
+    `getAverageTickTimeNanos()` is over `render.pauseAboveTickMs` (40), capped at 2 s a task so a
+    server that lags on its own still gets a map; the default pool is now a quarter of the cores.
+  - **Map reads queued on the game's `IOWorker`** in front of players' chunk loads, one per render
+    thread. At most two are in flight now (`ChunkStore.READS`); datafixing and parsing stay parallel.
 - ⚠ **Gradle's file-system watching does not work on `/mnt/d`** (drvfs sends no inotify). A newly
   added class compiled as `cannot find symbol` from the class that used it. `gradle.properties`
   sets `org.gradle.vfs.watch=false`; do not remove it.
