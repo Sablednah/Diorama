@@ -272,7 +272,7 @@ final class SelfTest {
         var d = first;
         var proto = new net.minecraft.world.level.chunk.storage.SerializableChunkData(d.containerFactory(), d.chunkPos(), d.minSectionY(),
                 d.lastUpdateTime(), d.inhabitedTime(), net.minecraft.world.level.chunk.status.ChunkStatus.FEATURES, d.blendingData(),
-                d.belowZeroRetrogen(), d.upgradeData(), d.carvingMask(), d.heightmaps(), d.packedTicks(), d.postProcessingSections(),
+                d.belowZeroRetrogen(), d.upgradeData(), d.heightmaps(), d.packedTicks(), d.postProcessingSections(),
                 d.lightCorrect(), d.sectionData(), d.entities(), d.blockEntities(), d.structureData(), d.attachmentData(), d.auxLightData());
 
         SaveQueue q = new SaveQueue();
