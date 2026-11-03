@@ -266,9 +266,9 @@ final class SelfTest {
         BlockPos spawn = overworld.getRespawnData().globalPos().pos();
         var pos = new net.minecraft.world.level.ChunkPos(spawn.getX() >> 4, spawn.getZ() >> 4);
         var first = service.server().submit(() -> net.minecraft.world.level.chunk.storage.SerializableChunkData.copyOf(
-                overworld, overworld.getChunk(pos.x(), pos.z()))).join();
+                overworld, overworld.getChunk(pos.x, pos.z))).join();
         var second = service.server().submit(() -> net.minecraft.world.level.chunk.storage.SerializableChunkData.copyOf(
-                overworld, overworld.getChunk(pos.x(), pos.z()))).join();
+                overworld, overworld.getChunk(pos.x, pos.z))).join();
         var d = first;
         var proto = new net.minecraft.world.level.chunk.storage.SerializableChunkData(d.containerFactory(), d.chunkPos(), d.minSectionY(),
                 d.lastUpdateTime(), d.inhabitedTime(), net.minecraft.world.level.chunk.status.ChunkStatus.FEATURES, d.blendingData(),
@@ -279,7 +279,7 @@ final class SelfTest {
         check(q.offer(overworld.dimension(), pos, first), "save queue refused a FULL chunk");
         check(q.offer(overworld.dimension(), pos, second) && q.size() == 1,
                 "save queue: a second save of one chunk should replace the first, holds " + q.size());
-        check(!q.offer(overworld.dimension(), new net.minecraft.world.level.ChunkPos(pos.x() + 1, pos.z()), proto) && q.size() == 1,
+        check(!q.offer(overworld.dimension(), new net.minecraft.world.level.ChunkPos(pos.x + 1, pos.z), proto) && q.size() == 1,
                 "save queue kept a chunk that is not FULL");
         // The same chunk in another world is another chunk.
         q.offer(net.minecraft.world.level.Level.NETHER, pos, first);

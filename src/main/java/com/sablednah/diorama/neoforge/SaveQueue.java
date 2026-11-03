@@ -34,7 +34,7 @@ final class SaveQueue {
         if (data.chunkStatus() != ChunkStatus.FULL) {
             return false;
         }
-        pending.put(new Key(level, pos.pack()), new Saved(level, pos, data));
+        pending.put(new Key(level, pos.toLong()), new Saved(level, pos, data));
         return true;
     }
 
