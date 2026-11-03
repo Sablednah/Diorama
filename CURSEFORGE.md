@@ -159,7 +159,8 @@ Datapack regions live in `data/<namespace>/diorama/regions/<name>.json` and are 
 | `render.views` | all four | which camera corners to draw; each costs as much as the first |
 | `render.night` | `false` | also draw every view by night |
 | `render.pixelsPerBlock` | `32` | `16` draws about four times faster on a quarter of the disk |
-| `render.threads` | half your cores | workers drawing tiles, off the server thread |
+| `render.threads` | a quarter of your cores | workers drawing tiles, off the server thread |
+| `render.pauseAboveTickMs` | `40` | workers wait while the server's average tick is slower than this; `0` never waits |
 | `render.liveUpdates` | `true` | follow changes as they happen, not only on save |
 | `render.liveChunksPerSecond` | `32` | the budget for that |
 | `render.updateSeconds` | `15` | how often changed areas are redrawn |
